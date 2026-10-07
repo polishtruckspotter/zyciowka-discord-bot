@@ -22,12 +22,12 @@ Polskojęzyczny bot do weryfikacji członków i podstawowej moderacji serwera Di
    - `GUILD_ID` — ID serwera. Jeśli jest ustawione, komendy zarejestrują się tylko na tym serwerze (zalecane podczas konfiguracji).
    - `MOD_LOG_CHANNEL_ID` — opcjonalne ID kanału logów moderacji.
 
-3. W Discord Developer Portal → Bot → Privileged Gateway Intents włącz **Message Content Intent**. Bot potrzebuje go, aby odczytywać treść logów wysyłanych przez webhook gry. Bot korzysta też z intents `Guilds` i `Guild Messages`.
+3. W Discord Developer Portal → Bot → Privileged Gateway Intents włącz **Message Content Intent**. Bot potrzebuje go, aby odczytywać treść logów wysyłanych przez webhook gry. Włącz również **Server Members Intent** (`Guild Members`), aby wykrywać dołączających członków i wyrzucać boty. Bot korzysta też z intents `Guilds` i `Guild Messages`.
 
 4. Zaproś bota na serwer ze scope'ami `bot` i `applications.commands`. Przyznaj mu co najmniej:
    - View Channels, Send Messages i Embed Links,
    - Manage Roles (oraz ustaw najwyższą rolę bota wyżej niż obie role wybrane w `/setup-weryfikacja`),
-   - Moderate Members, Kick Members, Ban Members i Manage Messages dla funkcji moderacji.
+   - Moderate Members, Kick Members, Ban Members i Manage Messages dla funkcji moderacji. Uprawnienie Kick Members jest wymagane także do automatycznego wyrzucania botów.
 
 5. Uruchom bota:
 
@@ -79,6 +79,7 @@ Dodaj `DISCORD_TOKEN` i `CLIENT_ID` w ustawieniach zmiennych środowiskowych Wis
 - `/ostrzez` — ostrzega użytkownika; bot próbuje wysłać mu wiadomość prywatną. Wymaga uprawnienia Moderowanie członków.
 - `/timeout` — nakłada timeout od 1 minuty do 28 dni. Wymaga uprawnienia Moderowanie członków.
 - `/mute` — wycisza użytkownika przez Discord timeout na 1 minutę do 28 dni; wymaga powodu i czasu trwania. Wymaga uprawnienia Moderowanie członków.
+- Automatyczne wyrzucanie botów — bot wyrzuca każde nowe konto bota zaraz po dołączeniu. Obejmuje to także legalne integracje; boty obecne na serwerze przed uruchomieniem tej funkcji nie są wyrzucane.
 - `/kick` — wyrzuca użytkownika; wymaga podania powodu. Wymaga uprawnienia Wyrzucanie członków.
 - `/ban` — banuje użytkownika; wymaga podania powodu i opcjonalnie usuwa jego wiadomości z ostatnich 0–168 godzin. Wymaga uprawnienia Banowanie członków.
 - `/wyczysc` — usuwa od 1 do 100 wiadomości młodszych niż 14 dni w bieżącym kanale. Wymaga uprawnienia Zarządzanie wiadomościami.

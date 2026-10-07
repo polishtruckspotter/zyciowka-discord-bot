@@ -23,6 +23,7 @@ const { commands } = require("./commands");
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.MessageContent,
@@ -1609,6 +1610,17 @@ client.once("ready", async () => {
 client.on("messageCreate", (message) => {
   handleGameWebhookMessage(message).catch((error) => {
     console.error("Nie udało się przetworzyć logu webhooka Emergency Hamburg:", error);
+  });
+});
+
+client.on("guildMemberAdd", (member) => {
+  if (!member.user.bot || member.id === client.user?.id) return;
+
+  member.kick("Automatyczne usuwanie botów z serwera.").catch((error) => {
+    console.error(
+      `Nie udało się wyrzucić bota ${member.user.tag} (${member.id}) z serwera ${member.guild.name} (${member.guild.id}):`,
+      error,
+    );
   });
 });
 
