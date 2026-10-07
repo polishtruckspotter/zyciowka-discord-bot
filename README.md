@@ -70,11 +70,11 @@ Dodaj `DISCORD_TOKEN` i `CLIENT_ID` w ustawieniach zmiennych środowiskowych Wis
 
 - `data/` zawiera puste pliki JSON na przyszłą konfigurację, modmail, logi, ostrzeżenia, tickety i tymczasowe bany.
 - `api/` zawiera placeholdery o nazwach z przykładowej struktury. To nie są jeszcze działające endpointy i nie są używane przez bota.
-- `/setup-weryfikacja kanal rola-do-nadania rola-do-zabrania` — publikuje panel w wybranym kanale. Po poprawnej odpowiedzi matematycznej bot nada pierwszą rolę i zabierze drugą. Wymaga uprawnienia Zarządzanie serwerem.
+- `/setup-weryfikacja kanal rola-do-nadania rola-do-nadania-2 rola-do-zabrania` — publikuje panel w wybranym kanale. Po poprawnej odpowiedzi matematycznej bot nada dwie wybrane role i zabierze wskazaną rolę. Wymaga uprawnienia Zarządzanie serwerem.
 - `/setup-dowody kanal-dowodow` — publikuje w bieżącym kanale panel do wyrobienia dowodu. Po kliknięciu użytkownik wypełnia formularz z imieniem i nazwiskiem, wiekiem, płcią, obywatelstwem i Roblox ID. Bot pobiera nazwę konta oraz awatar z publicznego Roblox API, a gotowy dowód wysyła na wybrany kanał. Wymaga uprawnienia Zarządzanie serwerem.
 - `/setup-logi-bany-kicki kanal-zrodlowy kanal-ban-kick` — wybiera kanał, na którym webhook gry publikuje logi, oraz kanał docelowy dla banów i wyrzuceń. Bot przekazuje wykryte bany jako edytowalne karty, a wyrzucenia jako logi.
 - `/setup-logi-inne kanal-inne` — wybiera kanał docelowy dla pozostałych webhooków i publikuje panel ręcznego zgłaszania użycia admin car lub fly.
-- `/setup-ogloszenia kanal-ogloszen` — publikuje panel tworzenia ogłoszeń. Moderator z uprawnieniem Zarządzanie serwerem może wpisać tytuł i treść, a bot opublikuje ogłoszenie na wybranym kanale.
+- `/setup-ogloszenia kanal-ogloszen [rola-do-pingowania]` — publikuje panel tworzenia ogłoszeń. Moderator z uprawnieniem Zarządzanie serwerem może wpisać tytuł i treść, a bot opublikuje ogłoszenie z GIF-em `zyciówka rp.gif` na wybranym kanale. Opcjonalna rola otrzyma ghost ping; bot musi mieć uprawnienia Załączanie plików i (jeśli rola jest wybrana) Zarządzanie wiadomościami oraz możliwość wspominania tej roli.
 - `/setup-ping-poczekalnia kanal-glosowy rola-do-pingowania kanal-pingow` — po wejściu członka do wskazanego kanału głosowego bot pingnie wybraną rolę i członka na wybranym kanale tekstowym. Wymaga uprawnienia Zarządzanie serwerem.
 - `/ostrzez` — ostrzega użytkownika; bot próbuje wysłać mu wiadomość prywatną. Wymaga uprawnienia Moderowanie członków.
 - `/timeout` — nakłada timeout od 1 minuty do 28 dni. Wymaga uprawnienia Moderowanie członków.

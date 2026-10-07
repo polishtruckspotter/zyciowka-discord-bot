@@ -4,6 +4,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   Client,
@@ -437,7 +438,10 @@ async function handleCommand(interaction) {
 
   if (interaction.commandName === "setup-weryfikacja") {
     const channel = interaction.options.getChannel("kanal", true);
-    const roleToGive = interaction.options.getRole("rola-do-nadania", true);
+    const rolesToGive = [
+      interaction.options.getRole("rola-do-nadania", true),
+      interaction.options.getRole("rola-do-nadania-2", true),
+    ];
     const roleToRemove = interaction.options.getRole("rola-do-zabrania", true);
     if (channel.type !== ChannelType.GuildText) {
       await interaction.reply({
@@ -446,16 +450,16 @@ async function handleCommand(interaction) {
       });
       return;
     }
-    if (roleToGive.id === roleToRemove.id) {
+    if (new Set([...rolesToGive, roleToRemove].map((role) => role.id)).size !== 3) {
       await interaction.reply({
-        content: "Wybierz dwie różne role: jedną do nadania i jedną do zabrania.",
+        content: "Wybierz trzy różne role: dwie do nadania i jedną do zabrania.",
         ephemeral: true,
       });
       return;
     }
 
     const botMember = await interaction.guild.members.fetchMe();
-    const unmanageableRole = [roleToGive, roleToRemove].find(
+    const unmanageableRole = [...rolesToGive, roleToRemove].find(
       (role) =>
         role.id === interaction.guild.id ||
         role.managed ||
@@ -473,19 +477,19 @@ async function handleCommand(interaction) {
       .setColor(0x2ecc71)
       .setTitle("Weryfikacja — Zyciówka RP")
       .setDescription(
-        `Kliknij przycisk poniżej i rozwiąż krótkie działanie matematyczne.\nPo poprawnej odpowiedzi otrzymasz rolę ${roleToGive}, a rola ${roleToRemove} zostanie zabrana.`,
+        `Kliknij przycisk poniżej i rozwiąż krótkie działanie matematyczne.\nPo poprawnej odpowiedzi otrzymasz role ${rolesToGive.join(" i ")}, a rola ${roleToRemove} zostanie zabrana.`,
       )
       .setFooter({ text: "Weryfikacja dotyczy dostępu do Discorda, nie potwierdza konta w grze Emergency Hamburg." });
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`verify-player:${roleToGive.id}:${roleToRemove.id}`)
+        .setCustomId(`verify-player:${rolesToGive.map((role) => role.id).join(":")}:${roleToRemove.id}`)
         .setLabel("Zweryfikuj się")
         .setStyle(ButtonStyle.Success),
     );
 
     await channel.send({ embeds: [embed], components: [row] });
     await interaction.reply({
-      content: `Panel weryfikacji opublikowano na kanale ${channel}. Po weryfikacji bot nada ${roleToGive} i zabierze ${roleToRemove}.`,
+      content: `Panel weryfikacji opublikowano na kanale ${channel}. Po weryfikacji bot nada role ${rolesToGive.join(" i ")} i zabierze ${roleToRemove}.`,
       ephemeral: true,
     });
     return;
@@ -493,9 +497,46 @@ async function handleCommand(interaction) {
 
   if (interaction.commandName === "setup-ogloszenia") {
     const destination = interaction.options.getChannel("kanal-ogloszen", true);
+    const roleToPing = interaction.options.getRole("rola-do-pingowania");
     if (destination.type !== ChannelType.GuildText) {
       await interaction.reply({
         content: "Wybierz zwykły kanał tekstowy na ogłoszenia.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const botMember = await interaction.guild.members.fetchMe();
+    const destinationPermissions = botMember.permissionsIn(destination);
+    const requiredPermissions =
+      PermissionFlagsBits.ViewChannel |
+      PermissionFlagsBits.SendMessages |
+      PermissionFlagsBits.EmbedLinks |
+      PermissionFlagsBits.AttachFiles;
+    if (!destinationPermissions.has(requiredPermissions)) {
+      await interaction.reply({
+        content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości, Osadzanie linków i Załączanie plików na ${destination}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    if (
+      roleToPing &&
+      (!roleToPing.mentionable &&
+        !destinationPermissions.has(PermissionFlagsBits.MentionEveryone))
+    ) {
+      await interaction.reply({
+        content: `Nie można pingować roli ${roleToPing}: włącz opcję „Może być wspomniana” albo nadaj botowi uprawnienie Wspominanie @everyone, @here i wszystkich ról na ${destination}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    if (
+      roleToPing &&
+      !destinationPermissions.has(PermissionFlagsBits.ManageMessages)
+    ) {
+      await interaction.reply({
+        content: `Bot potrzebuje uprawnienia Zarządzanie wiadomościami na ${destination}, aby usunąć ghost ping.`,
         ephemeral: true,
       });
       return;
@@ -508,14 +549,14 @@ async function handleCommand(interaction) {
       .setFooter({ text: "Ogłoszenia × Zyciówka RP" });
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`create-announcement:${destination.id}`)
+        .setCustomId(`create-announcement:${destination.id}:${roleToPing?.id ?? "none"}`)
         .setLabel("Utwórz ogłoszenie")
         .setStyle(ButtonStyle.Primary),
     );
 
     await interaction.channel.send({ embeds: [embed], components: [row] });
     await interaction.reply({
-      content: `Panel ogłoszeń opublikowano. Ogłoszenia będą wysyłane na kanał ${destination}.`,
+      content: `Panel ogłoszeń opublikowano. Ogłoszenia będą wysyłane na kanał ${destination}${roleToPing ? ` z ghost pingiem roli ${roleToPing}` : ""}.`,
       ephemeral: true,
     });
     return;
@@ -959,9 +1000,12 @@ async function handleButton(interaction) {
       return;
     }
 
-    const destinationId = interaction.customId.slice("create-announcement:".length);
+    const [, destinationId, roleId = "none"] = interaction.customId.split(":");
+    if (!destinationId) {
+      throw new Error("Przycisk ogłoszeń nie ma skonfigurowanego kanału.");
+    }
     const modal = new ModalBuilder()
-      .setCustomId(`submit-announcement:${destinationId}`)
+      .setCustomId(`submit-announcement:${destinationId}:${roleId}`)
       .setTitle("Nowe ogłoszenie");
     const title = new TextInputBuilder()
       .setCustomId("title")
@@ -1070,19 +1114,26 @@ async function handleButton(interaction) {
 
   if (!interaction.customId.startsWith("verify-player:")) return;
 
-  const [, giveRoleId, removeRoleId] = interaction.customId.split(":");
-  if (!giveRoleId || !removeRoleId || giveRoleId === removeRoleId) {
+  const roleIds = interaction.customId.split(":").slice(1);
+  const removeRoleId = roleIds.pop();
+  const giveRoleIds = roleIds;
+  if (
+    (giveRoleIds.length !== 1 && giveRoleIds.length !== 2) ||
+    giveRoleIds.some((id) => !id) ||
+    !removeRoleId ||
+    new Set([...giveRoleIds, removeRoleId]).size !== giveRoleIds.length + 1
+  ) {
     throw new Error("Panel weryfikacji ma nieprawidłowo skonfigurowane role.");
   }
-  const [roleToGive, roleToRemove] = await Promise.all([
-    interaction.guild.roles.fetch(giveRoleId),
+  const [rolesToGive, roleToRemove] = await Promise.all([
+    Promise.all(giveRoleIds.map((id) => interaction.guild.roles.fetch(id))),
     interaction.guild.roles.fetch(removeRoleId),
   ]);
-  if (!roleToGive || !roleToRemove) {
+  if (rolesToGive.some((role) => !role) || !roleToRemove) {
     throw new Error("Jedna z ról panelu weryfikacji już nie istnieje.");
   }
   const member = await interaction.guild.members.fetch(interaction.user.id);
-  if (member.roles.cache.has(roleToGive.id)) {
+  if (rolesToGive.every((role) => member.roles.cache.has(role.id))) {
     await interaction.reply({ content: "Masz już przyznaną rolę zweryfikowanego gracza.", ephemeral: true });
     return;
   }
@@ -1090,13 +1141,13 @@ async function handleButton(interaction) {
   const { question, answer } = makeChallenge();
   verificationChallenges.set(challengeKey(interaction.guildId, interaction.user.id), {
     answer,
-    giveRoleId,
+    giveRoleIds,
     removeRoleId,
     expiresAt: Date.now() + challengeLifetimeMs,
   });
 
   const modal = new ModalBuilder()
-    .setCustomId(`verify-math-answer:${giveRoleId}:${removeRoleId}`)
+    .setCustomId(`verify-math-answer:${giveRoleIds.join(":")}:${removeRoleId}`)
     .setTitle("Weryfikacja Zyciówka RP");
   const answerInput = new TextInputBuilder()
     .setCustomId("answer")
@@ -1220,10 +1271,36 @@ async function handleModal(interaction) {
       return;
     }
 
-    const destinationId = interaction.customId.slice("submit-announcement:".length);
+    const [, destinationId, roleId = "none"] = interaction.customId.split(":");
+    if (!destinationId) {
+      throw new Error("Formularz ogłoszenia nie ma skonfigurowanego kanału.");
+    }
     const destination = await interaction.guild.channels.fetch(destinationId);
     if (!destination?.isTextBased() || destination.type !== ChannelType.GuildText) {
       throw new Error("Kanał ogłoszeń nie istnieje albo nie jest kanałem tekstowym.");
+    }
+    const roleToPing = roleId === "none"
+      ? null
+      : await interaction.guild.roles.fetch(roleId);
+    if (roleId !== "none" && !roleToPing) {
+      throw new Error("Skonfigurowana rola do ghost pinga już nie istnieje.");
+    }
+    if (roleToPing) {
+      const botMember = await interaction.guild.members.fetchMe();
+      const destinationPermissions = botMember.permissionsIn(destination);
+      if (
+        !roleToPing.mentionable &&
+        !destinationPermissions.has(PermissionFlagsBits.MentionEveryone)
+      ) {
+        throw new Error(
+          `Bot nie może pingować roli ${roleToPing}. Włącz opcję „Może być wspomniana” albo nadaj botowi uprawnienie Wspominanie @everyone, @here i wszystkich ról na ${destination}.`,
+        );
+      }
+      if (!destinationPermissions.has(PermissionFlagsBits.ManageMessages)) {
+        throw new Error(
+          `Bot potrzebuje uprawnienia Zarządzanie wiadomościami na ${destination}, aby usunąć ghost ping.`,
+        );
+      }
     }
 
     const title = interaction.fields.getTextInputValue("title").trim();
@@ -1240,12 +1317,37 @@ async function handleModal(interaction) {
       .setColor(0x5865f2)
       .setTitle(title)
       .setDescription(content)
+      .setImage("attachment://zyciowka-rp.gif")
       .setFooter({ text: `Ogłoszenie od ${interaction.user.tag}` })
       .setTimestamp();
-    await destination.send({ embeds: [announcement], allowedMentions: { parse: [] } });
-    await interaction.reply({
-      content: `Ogłoszenie zostało opublikowane na kanale ${destination}.`,
-      ephemeral: true,
+    await interaction.deferReply({ ephemeral: true });
+    await destination.send({
+      embeds: [announcement],
+      files: [
+        new AttachmentBuilder(path.join(__dirname, "..", "zyciówka rp.gif"), {
+          name: "zyciowka-rp.gif",
+        }),
+      ],
+      allowedMentions: { parse: [] },
+    });
+    if (roleToPing) {
+      try {
+        const pingMessage = await destination.send({
+          content: `<@&${roleToPing.id}>`,
+          allowedMentions: { parse: [], roles: [roleToPing.id] },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await pingMessage.delete();
+      } catch (error) {
+        console.error("Ogłoszenie opublikowano, ale ghost ping nie powiódł się:", error);
+        await interaction.editReply({
+          content: `Ogłoszenie zostało opublikowane na kanale ${destination}, ale ghost ping roli ${roleToPing} nie powiódł się. Sprawdź uprawnienia bota.`,
+        });
+        return;
+      }
+    }
+    await interaction.editReply({
+      content: `Ogłoszenie zostało opublikowane na kanale ${destination}${roleToPing ? `, a rola ${roleToPing} otrzymała ghost ping` : ""}.`,
     });
     return;
   }
@@ -1407,8 +1509,15 @@ async function handleModal(interaction) {
   }
   if (!interaction.customId.startsWith("verify-math-answer:")) return;
 
-  const [, giveRoleId, removeRoleId] = interaction.customId.split(":");
-  if (!giveRoleId || !removeRoleId || giveRoleId === removeRoleId) {
+  const roleIds = interaction.customId.split(":").slice(1);
+  const removeRoleId = roleIds.pop();
+  const giveRoleIds = roleIds;
+  if (
+    (giveRoleIds.length !== 1 && giveRoleIds.length !== 2) ||
+    giveRoleIds.some((id) => !id) ||
+    !removeRoleId ||
+    new Set([...giveRoleIds, removeRoleId]).size !== giveRoleIds.length + 1
+  ) {
     throw new Error("Formularz weryfikacji ma nieprawidłowo skonfigurowane role.");
   }
 
@@ -1418,7 +1527,7 @@ async function handleModal(interaction) {
   if (
     !challenge ||
     challenge.expiresAt < Date.now() ||
-    challenge.giveRoleId !== giveRoleId ||
+    challenge.giveRoleIds.join(":") !== giveRoleIds.join(":") ||
     challenge.removeRoleId !== removeRoleId
   ) {
     await interaction.reply({
@@ -1437,48 +1546,43 @@ async function handleModal(interaction) {
     return;
   }
 
-  const [roleToGive, roleToRemove] = await Promise.all([
-    interaction.guild.roles.fetch(giveRoleId),
+  const [rolesToGive, roleToRemove] = await Promise.all([
+    Promise.all(giveRoleIds.map((id) => interaction.guild.roles.fetch(id))),
     interaction.guild.roles.fetch(removeRoleId),
   ]);
-  if (!roleToGive || !roleToRemove) {
+  if (rolesToGive.some((role) => !role) || !roleToRemove) {
     throw new Error("Jedna z ról panelu weryfikacji już nie istnieje.");
   }
+  const allRoles = [...rolesToGive, roleToRemove];
   if (
-    roleToGive.id === roleToRemove.id ||
-    roleToGive.id === interaction.guild.id ||
-    roleToRemove.id === interaction.guild.id ||
-    roleToGive.managed ||
-    roleToRemove.managed
+    new Set(allRoles.map((role) => role.id)).size !== allRoles.length ||
+    allRoles.some((role) => role.id === interaction.guild.id || role.managed)
   ) {
     throw new Error("Role panelu weryfikacji są nieprawidłowe albo zarządzane przez integrację.");
   }
 
   const botMember = await interaction.guild.members.fetchMe();
-  if (
-    botMember.roles.highest.comparePositionTo(roleToGive) <= 0 ||
-    botMember.roles.highest.comparePositionTo(roleToRemove) <= 0
-  ) {
-    throw new Error("Rola bota musi być wyżej niż role nadawana i zabierana.");
+  if (allRoles.some((role) => botMember.roles.highest.comparePositionTo(role) <= 0)) {
+    throw new Error("Rola bota musi być wyżej niż role nadawane i zabierana.");
   }
   const member = await interaction.guild.members.fetch(interaction.user.id);
-  if (member.roles.cache.has(roleToGive.id)) {
+  if (rolesToGive.every((role) => member.roles.cache.has(role.id))) {
     await interaction.reply({ content: "Jesteś już zweryfikowany.", ephemeral: true });
     return;
   }
 
-  await member.roles.add(roleToGive, "Poprawna odpowiedź w weryfikacji matematycznej");
+  await member.roles.add(rolesToGive, "Poprawna odpowiedź w weryfikacji matematycznej");
   if (member.roles.cache.has(roleToRemove.id)) {
     try {
       await member.roles.remove(roleToRemove, "Poprawna odpowiedź w weryfikacji matematycznej");
     } catch (error) {
       throw new Error(
-        `Nadano rolę ${roleToGive.name}, ale nie udało się zabrać roli ${roleToRemove.name}: ${error.message}`,
+        `Nadano role ${rolesToGive.map((role) => role.name).join(" i ")}, ale nie udało się zabrać roli ${roleToRemove.name}: ${error.message}`,
       );
     }
   }
   await interaction.reply({
-    content: `Weryfikacja zakończona pomyślnie. Otrzymujesz rolę ${roleToGive} i tracisz rolę ${roleToRemove}.`,
+    content: `Weryfikacja zakończona pomyślnie. Otrzymujesz role ${rolesToGive.join(" i ")} i tracisz rolę ${roleToRemove}.`,
     ephemeral: true,
   });
 }

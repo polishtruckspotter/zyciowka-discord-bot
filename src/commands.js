@@ -18,7 +18,13 @@ const commands = [
     .addRoleOption((option) =>
       option
         .setName("rola-do-nadania")
-        .setDescription("Rola przyznawana po poprawnej weryfikacji.")
+        .setDescription("Pierwsza rola przyznawana po poprawnej weryfikacji.")
+        .setRequired(true),
+    )
+    .addRoleOption((option) =>
+      option
+        .setName("rola-do-nadania-2")
+        .setDescription("Druga rola przyznawana po poprawnej weryfikacji.")
         .setRequired(true),
     )
     .addRoleOption((option) =>
@@ -77,6 +83,12 @@ const commands = [
         .setDescription("Kanał, na którym bot będzie publikować ogłoszenia.")
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true),
+    )
+    .addRoleOption((option) =>
+      option
+        .setName("rola-do-pingowania")
+        .setDescription("Opcjonalna rola do ghost pinga przy publikacji ogłoszeń.")
+        .setRequired(false),
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
