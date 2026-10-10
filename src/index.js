@@ -43,7 +43,7 @@ const weaponPermitApplicationTimeoutMs = 15 * 60 * 1000;
 const roleChangeLogChannelId = "1555191573736591421";
 const praiseLogChannelIds = {
   skarga: "1556261784304746556",
-  pochwala: "556261886037860403",
+  pochwala: "1556261886037860403",
 };
 const weaponPermitQuestions = [
   { key: "Nick Roblox", prompt: "🎮 Nick Roblox:" },
