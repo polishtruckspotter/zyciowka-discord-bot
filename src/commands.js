@@ -157,8 +157,7 @@ const commands = [
     )
     .addStringOption((option) =>
       option.setName("powod").setDescription("Powód pochwały albo skargi.").setMaxLength(1000).setRequired(true),
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+    ),
   new SlashCommandBuilder()
     .setName("awansdegrad")
     .setDescription("Awansuje albo degraduje użytkownika przez zmianę jego roli.")

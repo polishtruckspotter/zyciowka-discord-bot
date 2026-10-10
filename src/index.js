@@ -13,6 +13,7 @@ const {
   GatewayIntentBits,
   ModalBuilder,
   MessageFlags,
+  Partials,
   PermissionFlagsBits,
   REST,
   Routes,
@@ -28,7 +29,9 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages,
   ],
+  partials: [Partials.Channel],
 });
 const verificationChallenges = new Map();
 const challengeLifetimeMs = 5 * 60 * 1000;
@@ -984,9 +987,10 @@ async function handleCommand(interaction) {
   }
 
   if (interaction.commandName === "pochwala-skarga") {
-    if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages)) {
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!member.permissions.has(PermissionFlagsBits.ManageMessages)) {
       await interaction.reply({
-        content: "Do użycia tej komendy potrzebujesz uprawnienia Zarządzanie wiadomościami.",
+        content: "Do użycia tej komendy potrzebujesz uprawnienia Zarządzanie wiadomościami na serwerze.",
         ephemeral: true,
       });
       return;
