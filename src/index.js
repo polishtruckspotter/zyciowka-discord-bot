@@ -1318,55 +1318,56 @@ async function handleButton(interaction) {
       return;
     }
 
-    if (weaponPermitDecisionLocks.has(interaction.message.id)) {
+    const lockKey = interaction.message.id;
+    if (weaponPermitDecisionLocks.has(lockKey)) {
       await interaction.reply({
         content: "Ten urlop jest już przetwarzany przez innego członka personelu.",
         ephemeral: true,
       });
       return;
     }
-    weaponPermitDecisionLocks.add(interaction.message.id);
+    weaponPermitDecisionLocks.add(lockKey);
     try {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const currentMessage = await interaction.channel.messages.fetch(interaction.message.id);
-        const currentEmbed = currentMessage.embeds[0];
-        if (
-          !isLeaveReviewMessage(interaction, userId, currentMessage) ||
-          getEmbedField(currentEmbed, "Status") !== expectedStatus
-        ) {
-          await interaction.editReply("Ten wniosek został już rozpatrzony.");
-          return;
-        }
-        const updatedEmbed = EmbedBuilder.from(currentEmbed)
-          .setColor(action === "accept" ? 0x2ecc71 : 0x95a5a6)
-          .setFields(
-            ...currentEmbed.fields.map((field) =>
-              field.name === "Status"
-                ? { name: field.name, value: nextStatus, inline: false }
-                : field,
-            ),
-            { name: "Rozpatrzył(a)", value: `<@${interaction.user.id}>`, inline: false },
-          );
-        await currentMessage.edit({
-          embeds: [updatedEmbed],
-          components: [makeLeaveReviewRow(userId, nextStatus)],
-          allowedMentions: { parse: [] },
-        });
-        await interaction.editReply(action === "accept" ? "Wniosek o urlop został zaakceptowany." : "Urlop został zakończony.");
-        const applicant = await client.users.fetch(userId).catch((error) => {
-          console.error(`Nie udało się pobrać użytkownika ${userId} do powiadomienia o urlopie:`, error);
-          return null;
-        });
-        if (applicant) {
-          await applicant.send(
-            action === "accept"
-              ? `Twój wniosek o urlop na serwerze ${interaction.guild.name} został zaakceptowany.`
-              : `Twój urlop na serwerze ${interaction.guild.name} został zakończony.`,
-          ).catch((error) => console.error(`Nie udało się powiadomić użytkownika ${userId} o zmianie statusu urlopu:`, error));
-        }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const currentMessage = await interaction.channel.messages.fetch(interaction.message.id);
+      const currentEmbed = currentMessage.embeds[0];
+      if (
+        !isLeaveReviewMessage(interaction, userId, currentMessage) ||
+        getEmbedField(currentEmbed, "Status") !== expectedStatus
+      ) {
+        await interaction.editReply("Ten wniosek został już rozpatrzony.");
         return;
+      }
+      const updatedEmbed = EmbedBuilder.from(currentEmbed)
+        .setColor(action === "accept" ? 0x2ecc71 : 0x95a5a6)
+        .setFields(
+          ...currentEmbed.fields.map((field) =>
+            field.name === "Status"
+              ? { name: field.name, value: nextStatus, inline: false }
+              : field,
+          ),
+          { name: "Rozpatrzył(a)", value: `<@${interaction.user.id}>`, inline: false },
+        );
+      await currentMessage.edit({
+        embeds: [updatedEmbed],
+        components: [makeLeaveReviewRow(userId, nextStatus)],
+        allowedMentions: { parse: [] },
+      });
+      await interaction.editReply(action === "accept" ? "Wniosek o urlop został zaakceptowany." : "Urlop został zakończony.");
+      const applicant = await client.users.fetch(userId).catch((error) => {
+        console.error(`Nie udało się pobrać użytkownika ${userId} do powiadomienia o urlopie:`, error);
+        return null;
+      });
+      if (applicant) {
+        await applicant.send(
+          action === "accept"
+            ? `Twój wniosek o urlop na serwerze ${interaction.guild.name} został zaakceptowany.`
+            : `Twój urlop na serwerze ${interaction.guild.name} został zakończony.`,
+        ).catch((error) => console.error(`Nie udało się powiadomić użytkownika ${userId} o zmianie statusu urlopu:`, error));
+      }
+      return;
     } finally {
-      weaponPermitDecisionLocks.delete(interaction.message.id);
+      weaponPermitDecisionLocks.delete(lockKey);
     }
   }
 
@@ -1976,11 +1977,10 @@ async function handleModal(interaction) {
   }
 
   if (interaction.customId.startsWith("submit-announcement:")) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
     if (!canPublishAnnouncement(interaction)) {
-      await interaction.editReply({
+      await interaction.reply({
         content: "Tylko moderatorzy z uprawnieniem Zarządzanie serwerem mogą publikować ogłoszenia.",
+        ephemeral: true,
       });
       return;
     }
@@ -2020,8 +2020,9 @@ async function handleModal(interaction) {
     const title = interaction.fields.getTextInputValue("title").trim();
     const content = interaction.fields.getTextInputValue("content").trim();
     if (!title || !content) {
-      await interaction.editReply({
+      await interaction.reply({
         content: "Tytuł i treść ogłoszenia nie mogą być puste.",
+        ephemeral: true,
       });
       return;
     }
@@ -2033,6 +2034,7 @@ async function handleModal(interaction) {
       .setImage("attachment://zyciowka-rp.gif")
       .setFooter({ text: `Ogłoszenie od ${interaction.user.tag}` })
       .setTimestamp();
+    await interaction.deferReply({ ephemeral: true });
     await destination.send({
       embeds: [announcement],
       files: [
