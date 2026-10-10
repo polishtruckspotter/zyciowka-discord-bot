@@ -189,6 +189,41 @@ const commands = [
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
   new SlashCommandBuilder()
+    .setName("awans")
+    .setDescription("Składa wniosek o przyznanie plusa.")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("wniosek")
+        .setDescription("Wyślij wniosek o przyznanie plusa.")
+        .addIntegerOption((option) =>
+          option
+            .setName("ile")
+            .setDescription("Liczba plusów, o które składasz wniosek.")
+            .setMinValue(1)
+            .setRequired(true),
+        )
+        .addStringOption((option) =>
+          option
+            .setName("dlaczego")
+            .setDescription("Uzasadnienie wniosku.")
+            .setMaxLength(1000)
+            .setRequired(true),
+        )
+        .addStringOption((option) =>
+          option
+            .setName("osoby-potwierdzajace")
+            .setDescription("Osoby, które mogą potwierdzić wniosek.")
+            .setMaxLength(500)
+            .setRequired(true),
+        )
+        .addStringOption((option) =>
+          option
+            .setName("dowod")
+            .setDescription("Opcjonalny link lub opis dowodu.")
+            .setMaxLength(1000),
+        ),
+    ),
+  new SlashCommandBuilder()
     .setName("plusminus")
     .setDescription("Nadaje albo zabiera rolę użytkownikowi i zapisuje zmianę na kanale logów.")
     .addUserOption((option) =>

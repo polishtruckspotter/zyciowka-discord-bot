@@ -41,6 +41,7 @@ const weaponPermitApplications = new Map();
 const weaponPermitDecisionLocks = new Set();
 const weaponPermitApplicationTimeoutMs = 15 * 60 * 1000;
 const roleChangeLogChannelId = "1555191573736591421";
+const plusRequestChannelId = "1555191866151145635";
 const praiseLogChannelIds = {
   skarga: "1556261784304746556",
   pochwala: "1556261886037860403",
@@ -1037,6 +1038,61 @@ async function handleCommand(interaction) {
     await destination.send({ embeds: [embed], allowedMentions: { parse: [] } });
     await interaction.reply({
       content: `${isPraise ? "Pochwała" : "Skarga"} została wysłana na ${destination}.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (interaction.commandName === "awans") {
+    if (interaction.options.getSubcommand(true) !== "wniosek") {
+      throw new Error("Nieznany typ wniosku o plusa.");
+    }
+
+    const amount = interaction.options.getInteger("ile", true);
+    const reason = interaction.options.getString("dlaczego", true).trim();
+    const confirmers = interaction.options.getString("osoby-potwierdzajace", true).trim();
+    const proof = interaction.options.getString("dowod")?.trim() || "Nie załączono";
+    if (!reason || !confirmers) {
+      await interaction.reply({
+        content: "Uzasadnienie i osoby potwierdzające nie mogą być puste.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const destination = await interaction.guild.channels.fetch(plusRequestChannelId);
+    if (!destination || destination.type !== ChannelType.GuildText) {
+      throw new Error(`Kanał wniosków o plusa (${plusRequestChannelId}) nie istnieje albo nie jest kanałem tekstowym.`);
+    }
+
+    const botMember = await interaction.guild.members.fetchMe();
+    const requiredPermissions =
+      PermissionFlagsBits.ViewChannel |
+      PermissionFlagsBits.SendMessages |
+      PermissionFlagsBits.EmbedLinks;
+    if (!botMember.permissionsIn(destination).has(requiredPermissions)) {
+      await interaction.reply({
+        content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${destination}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle("━━━━━━━ Wniosek o plusa ━━━━━━━")
+      .addFields(
+        { name: "🛡️ Kto daje", value: `${interaction.user} (${interaction.user.tag})`, inline: false },
+        { name: "🔢 Ile", value: String(amount), inline: true },
+        { name: "📌 Dlaczego", value: limitField(reason, 1000), inline: false },
+        { name: "👤 Osoby potwierdzające", value: limitField(confirmers, 500), inline: false },
+        { name: "📎 Dowód", value: limitField(proof, 1000), inline: false },
+      )
+      .setTimestamp();
+
+    await destination.send({ embeds: [embed], allowedMentions: { parse: [] } });
+    await interaction.reply({
+      content: `Wniosek o plusa został wysłany na ${destination}.`,
       ephemeral: true,
     });
     return;
