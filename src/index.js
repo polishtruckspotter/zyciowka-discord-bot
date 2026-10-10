@@ -1043,7 +1043,7 @@ async function handleCommand(interaction) {
     return;
   }
 
-  if (interaction.commandName === "awans") {
+  if (interaction.commandName === "plusa") {
     if (interaction.options.getSubcommand(true) !== "wniosek") {
       throw new Error("Nieznany typ wniosku o plusa.");
     }

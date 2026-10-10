@@ -189,7 +189,7 @@ const commands = [
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
   new SlashCommandBuilder()
-    .setName("awans")
+    .setName("plusa")
     .setDescription("Składa wniosek o przyznanie plusa.")
     .addSubcommand((subcommand) =>
       subcommand
