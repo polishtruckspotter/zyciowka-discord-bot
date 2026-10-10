@@ -92,6 +92,30 @@ const commands = [
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
+    .setName("setup-pozwolenie-na-bron")
+    .setDescription("Publikuje panel wniosków o pozwolenie na broń.")
+    .addChannelOption((option) =>
+      option
+        .setName("kanal-panelu")
+        .setDescription("Kanał, na którym użytkownicy rozpoczną składanie wniosku.")
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true),
+    )
+    .addChannelOption((option) =>
+      option
+        .setName("kanal-wnioskow")
+        .setDescription("Prywatny kanał dla wniosków oczekujących na decyzję personelu.")
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true),
+    )
+    .addRoleOption((option) =>
+      option
+        .setName("rola-po-akceptacji")
+        .setDescription("Rola nadawana po zaakceptowaniu wniosku.")
+        .setRequired(true),
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
     .setName("setup-ping-poczekalnia")
     .setDescription("Ustawia automatyczne pingowanie roli po wejściu do poczekalni głosowej.")
     .addChannelOption((option) =>
@@ -117,7 +141,7 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
     .setName("pochwala-skarga")
-    .setDescription("Wysyła pochwałę albo skargę o użytkowniku na wybrany kanał.")
+    .setDescription("Wysyła pochwałę albo skargę o użytkowniku na przypisany kanał.")
     .addUserOption((option) =>
       option.setName("uzytkownik").setDescription("Osoba, której dotyczy wpis.").setRequired(true),
     )
@@ -133,13 +157,6 @@ const commands = [
     )
     .addStringOption((option) =>
       option.setName("powod").setDescription("Powód pochwały albo skargi.").setMaxLength(1000).setRequired(true),
-    )
-    .addChannelOption((option) =>
-      option
-        .setName("kanal")
-        .setDescription("Kanał, na który wysłać wpis.")
-        .addChannelTypes(ChannelType.GuildText)
-        .setRequired(true),
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
   new SlashCommandBuilder()
@@ -174,7 +191,7 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
   new SlashCommandBuilder()
     .setName("plusminus")
-    .setDescription("Nadaje albo zabiera wybraną rolę użytkownikowi.")
+    .setDescription("Nadaje albo zabiera rolę użytkownikowi i zapisuje zmianę na kanale logów.")
     .addUserOption((option) =>
       option.setName("uzytkownik").setDescription("Osoba, której zmienić rolę.").setRequired(true),
     )
@@ -194,14 +211,17 @@ const commands = [
     .addStringOption((option) =>
       option.setName("powod").setDescription("Powód zmiany roli.").setMaxLength(500).setRequired(true),
     )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+  new SlashCommandBuilder()
+    .setName("urlop")
+    .setDescription("Składa wniosek o urlop do rozpatrzenia przez personel.")
     .addChannelOption((option) =>
       option
-        .setName("kanal")
-        .setDescription("Kanał, na który wysłać embed z informacją o zmianie.")
+        .setName("kanal-wnioskow")
+        .setDescription("Prywatny kanał, na którym personel rozpatruje wnioski o urlop.")
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(true),
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+    ),
   new SlashCommandBuilder()
     .setName("ostrzez")
     .setDescription("Wysyła ostrzeżenie użytkownikowi.")

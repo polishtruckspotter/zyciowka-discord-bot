@@ -12,6 +12,7 @@ const {
   EmbedBuilder,
   GatewayIntentBits,
   ModalBuilder,
+  MessageFlags,
   PermissionFlagsBits,
   REST,
   Routes,
@@ -33,6 +34,50 @@ const verificationChallenges = new Map();
 const challengeLifetimeMs = 5 * 60 * 1000;
 const waitingRoomPingCooldownMs = 30 * 1000;
 const waitingRoomPingCooldowns = new Map();
+const weaponPermitApplications = new Map();
+const weaponPermitDecisionLocks = new Set();
+const weaponPermitApplicationTimeoutMs = 15 * 60 * 1000;
+const roleChangeLogChannelId = "1555191573736591421";
+const praiseLogChannelIds = {
+  skarga: "1556261784304746556",
+  pochwala: "556261886037860403",
+};
+const weaponPermitQuestions = [
+  { key: "Nick Roblox", prompt: "🎮 Nick Roblox:" },
+  { key: "Nick Discord", prompt: "💬 Nick Discord:" },
+  {
+    key: "Rodzaj broni",
+    prompt: "🔫 Jaki rodzaj broni wybierasz? Odpowiedz: Krótka albo Długa.",
+  },
+  {
+    key: "Sytuacje użycia broni",
+    prompt: "⚖️ W jakich sytuacjach możesz zgodnie z regulaminem serwera użyć broni?",
+  },
+  {
+    key: "Reakcja na prowokację",
+    prompt: "🚨 Co zrobisz, jeśli ktoś zacznie ci grozić lub prowokować cię do użycia broni?",
+  },
+  {
+    key: "Przestrzeganie zasad",
+    prompt: "📜 Czy zobowiązujesz się przestrzegać zasad dotyczących używania broni?",
+  },
+  {
+    key: "Broń bez pozwolenia",
+    prompt: "🛑 Co zrobisz, jeśli zauważysz osobę używającą broni bez pozwolenia?",
+  },
+  {
+    key: "Ocena sytuacji",
+    prompt: "🧠 Jak zachowasz się, gdy wyciągnięcie broni mogłoby pogorszyć twoją sytuację?",
+  },
+  {
+    key: "Powód wniosku",
+    prompt: "🔫 Dlaczego chcesz otrzymać pozwolenie na broń?",
+  },
+  {
+    key: "Pojęcia RP",
+    prompt: "📚 Co oznaczają pojęcia: FRP, RDM, GZ, EZ i NZ?",
+  },
+];
 const webhookConfigPath = path.join(__dirname, "..", "data", "eh-webhook-config.json");
 let webhookConfigs = {};
 
@@ -136,6 +181,159 @@ function canSubmitModerationLog(interaction) {
 
 function canPublishAnnouncement(interaction) {
   return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
+}
+
+function clearWeaponPermitApplication(userId) {
+  const application = weaponPermitApplications.get(userId);
+  if (application) clearTimeout(application.timeout);
+  weaponPermitApplications.delete(userId);
+}
+
+function makeWeaponPermitReviewRow(userId, disabled = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`weapon-permit:approve:${userId}`)
+      .setLabel("Zaakceptuj")
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`weapon-permit:reject:${userId}`)
+      .setLabel("Odrzuć")
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled),
+  );
+}
+
+function makeLeaveReviewRow(userId, status) {
+  const pending = status === "Oczekuje na akceptację";
+  const active = status === "Urlop zaakceptowany";
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`leave:accept:${userId}`)
+      .setLabel("Zaakceptuj urlop")
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(!pending),
+    new ButtonBuilder()
+      .setCustomId(`leave:end:${userId}`)
+      .setLabel("Zakończ urlop")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(!active),
+    new ButtonBuilder()
+      .setCustomId(`leave:end-reason:${userId}`)
+      .setLabel("Zakończ z powodem")
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(!active),
+  );
+}
+
+function isLeaveReviewMessage(interaction, userId, message = interaction.message) {
+  const embed = message.embeds[0];
+  return Boolean(
+    userId &&
+    message.author.id === client.user.id &&
+    embed?.footer?.text === `urlop:${interaction.guildId}:${userId}`,
+  );
+}
+
+async function sendWeaponPermitQuestion(application) {
+  const question = weaponPermitQuestions[application.answers.length];
+  await application.user.send({
+    content: `${question.prompt}\n\nOdpowiedz na tę wiadomość. Wpisz „anuluj”, aby przerwać wniosek. Pozostały czas: 15 minut.`,
+    allowedMentions: { parse: [] },
+  });
+}
+
+async function submitWeaponPermitApplication(application) {
+  const guild = await client.guilds.fetch(application.guildId);
+  const reviewChannel = await guild.channels.fetch(application.reviewChannelId);
+  if (!reviewChannel?.isTextBased() || reviewChannel.type !== ChannelType.GuildText) {
+    throw new Error(`Kanał wniosków ${application.reviewChannelId} nie istnieje albo nie jest tekstowy.`);
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle("Wniosek o pozwolenie na broń")
+    .setDescription(`Wnioskodawca: <@${application.user.id}>`)
+    .addFields(
+      ...weaponPermitQuestions.map((question, index) => ({
+        name: question.key,
+        value: application.answers[index],
+        inline: false,
+      })),
+      { name: "Status wniosku", value: "Oczekuje na decyzję personelu", inline: false },
+    )
+    .setFooter({ text: `weapon-permit:${application.guildId}:${application.user.id}` })
+    .setTimestamp();
+
+  await reviewChannel.send({
+    embeds: [embed],
+    components: [makeWeaponPermitReviewRow(application.user.id)],
+    allowedMentions: { parse: [] },
+  });
+}
+
+async function handleWeaponPermitAnswer(message) {
+  if (message.guild || message.author.bot) return;
+  const application = weaponPermitApplications.get(message.author.id);
+  if (!application || application.processing) return;
+  application.processing = true;
+
+  const answer = message.content.trim();
+  if (!answer) {
+    await message.reply("Odpowiedź nie może być pusta. Odpowiedz na bieżące pytanie.");
+    application.processing = false;
+    return;
+  }
+  if (answer.length > 400) {
+    await message.reply("Odpowiedź jest za długa. Skróć ją do maksymalnie 400 znaków i spróbuj ponownie.");
+    application.processing = false;
+    return;
+  }
+  if (answer.toLocaleLowerCase("pl") === "anuluj") {
+    clearWeaponPermitApplication(message.author.id);
+    await message.reply("Wniosek o pozwolenie na broń został anulowany.");
+    return;
+  }
+
+  const currentQuestion = weaponPermitQuestions[application.answers.length];
+  application.answers.push(
+    currentQuestion.key === "Rodzaj broni"
+      ? answer.toLocaleLowerCase("pl").startsWith("k")
+        ? "Krótka"
+        : answer.toLocaleLowerCase("pl").startsWith("d")
+          ? "Długa"
+          : answer
+      : answer,
+  );
+  if (
+    currentQuestion.key === "Rodzaj broni" &&
+    !["krótka", "krotka", "długa", "dluga"].includes(answer.toLocaleLowerCase("pl"))
+  ) {
+    application.answers.pop();
+    await message.reply("Wybierz rodzaj broni, wpisując „Krótka” albo „Długa”.");
+    application.processing = false;
+    return;
+  }
+
+  if (application.answers.length < weaponPermitQuestions.length) {
+    try {
+      await sendWeaponPermitQuestion(application);
+      application.processing = false;
+    } catch (error) {
+      clearWeaponPermitApplication(message.author.id);
+      throw error;
+    }
+    return;
+  }
+
+  try {
+    await submitWeaponPermitApplication(application);
+    clearWeaponPermitApplication(message.author.id);
+    await message.reply("Dziękujemy! Twój wniosek został przekazany personelowi do rozpatrzenia.");
+  } catch (error) {
+    clearWeaponPermitApplication(message.author.id);
+    throw error;
+  }
 }
 
 function getEmbedField(embed, name) {
@@ -391,6 +589,38 @@ async function getModerationTarget(interaction, user) {
 }
 
 async function handleCommand(interaction) {
+  if (interaction.commandName === "urlop") {
+    const reviewChannel = interaction.options.getChannel("kanal-wnioskow", true);
+    const modal = new ModalBuilder()
+      .setCustomId(`leave:submit:${reviewChannel.id}`)
+      .setTitle("Wniosek o urlop");
+    const duration = new TextInputBuilder()
+      .setCustomId("duration")
+      .setLabel("Na jak długo chcesz wziąć urlop?")
+      .setStyle(TextInputStyle.Short)
+      .setMaxLength(100)
+      .setRequired(true);
+    const reason = new TextInputBuilder()
+      .setCustomId("reason")
+      .setLabel("Z jakiego powodu potrzebujesz urlopu?")
+      .setStyle(TextInputStyle.Paragraph)
+      .setMaxLength(1000)
+      .setRequired(true);
+    const details = new TextInputBuilder()
+      .setCustomId("details")
+      .setLabel("Dodatkowe informacje (opcjonalnie)")
+      .setStyle(TextInputStyle.Paragraph)
+      .setMaxLength(500)
+      .setRequired(false);
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(duration),
+      new ActionRowBuilder().addComponents(reason),
+      new ActionRowBuilder().addComponents(details),
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
   if (interaction.commandName === "setup-ping-poczekalnia") {
     const voiceChannel = interaction.options.getChannel("kanal-glosowy", true);
     const role = interaction.options.getRole("rola-do-pingowania", true);
@@ -563,6 +793,64 @@ async function handleCommand(interaction) {
     return;
   }
 
+  if (interaction.commandName === "setup-pozwolenie-na-bron") {
+    const panelChannel = interaction.options.getChannel("kanal-panelu", true);
+    const reviewChannel = interaction.options.getChannel("kanal-wnioskow", true);
+    const permitRole = interaction.options.getRole("rola-po-akceptacji", true);
+    const botMember = await interaction.guild.members.fetchMe();
+    const unmanageableRole =
+      permitRole.id === interaction.guild.id ||
+      permitRole.managed ||
+      botMember.roles.highest.comparePositionTo(permitRole) <= 0;
+    if (unmanageableRole || !botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+      await interaction.reply({
+        content: "Bot potrzebuje uprawnienia Zarządzanie rolami, a jego najwyższa rola musi być wyżej niż wybrana rola.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    for (const channel of [panelChannel, reviewChannel]) {
+      const permissions = botMember.permissionsIn(channel);
+      const requiredPermissions =
+        PermissionFlagsBits.ViewChannel |
+        PermissionFlagsBits.SendMessages |
+        PermissionFlagsBits.EmbedLinks;
+      if (!permissions.has(requiredPermissions)) {
+        await interaction.reply({
+          content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${channel}.`,
+          ephemeral: true,
+        });
+        return;
+      }
+    }
+
+    await updateWebhookConfig(interaction.guildId, {
+      weaponPermitPanelChannelId: panelChannel.id,
+      weaponPermitReviewChannelId: reviewChannel.id,
+      weaponPermitRoleId: permitRole.id,
+    });
+    const panelEmbed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle("Pozwolenie na broń — Zyciówka RP")
+      .setDescription(
+        "Kliknij przycisk poniżej, aby wypełnić wniosek w wiadomości prywatnej. Personel rozpatrzy go na osobnym kanale.",
+      )
+      .setFooter({ text: "Odpowiadaj na pytania po kolei. Wpisz „anuluj”, aby przerwać." });
+    const panelRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("weapon-permit:apply")
+        .setLabel("Pozwolenie na broń")
+        .setStyle(ButtonStyle.Primary),
+    );
+    await panelChannel.send({ embeds: [panelEmbed], components: [panelRow] });
+    await interaction.reply({
+      content: `Panel wniosków opublikowano na ${panelChannel}. Wnioski trafią na ${reviewChannel}; zaakceptowanym osobom zostanie nadana rola ${permitRole}.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
   if (
     interaction.commandName === "setup-logi-bany-kicki" ||
     interaction.commandName === "setup-logi-inne"
@@ -707,7 +995,6 @@ async function handleCommand(interaction) {
     const user = interaction.options.getUser("uzytkownik", true);
     const type = interaction.options.getString("typ", true);
     const reason = interaction.options.getString("powod", true).trim();
-    const destination = interaction.options.getChannel("kanal", true);
     if (!["pochwala", "skarga"].includes(type)) {
       throw new Error("Nieprawidłowy typ wpisu.");
     }
@@ -715,11 +1002,11 @@ async function handleCommand(interaction) {
       await interaction.reply({ content: "Powód nie może być pusty.", ephemeral: true });
       return;
     }
-    if (destination.type !== ChannelType.GuildText) {
-      await interaction.reply({ content: "Wybierz zwykły kanał tekstowy.", ephemeral: true });
-      return;
+    const destinationId = praiseLogChannelIds[type];
+    const destination = await interaction.guild.channels.fetch(destinationId);
+    if (!destination || destination.type !== ChannelType.GuildText) {
+      throw new Error(`Skonfigurowany kanał ${type === "skarga" ? "skarg" : "pochwał"} (${destinationId}) nie istnieje albo nie jest tekstowy.`);
     }
-
     const botMember = await interaction.guild.members.fetchMe();
     const requiredPermissions =
       PermissionFlagsBits.ViewChannel |
@@ -745,7 +1032,7 @@ async function handleCommand(interaction) {
       .setTimestamp();
     await destination.send({ embeds: [embed], allowedMentions: { parse: [] } });
     await interaction.reply({
-      content: `${isPraise ? "Pochwała" : "Skarga"} została wysłana na kanał ${destination}.`,
+      content: `${isPraise ? "Pochwała" : "Skarga"} została wysłana na ${destination}.`,
       ephemeral: true,
     });
     return;
@@ -772,14 +1059,16 @@ async function handleCommand(interaction) {
     const shouldAddRole = isPromotionCommand ? action === "awans" : action === "plus";
     const role = interaction.options.getRole("rola", true);
     const reason = interaction.options.getString("powod", true).trim();
-    const destination = interaction.options.getChannel("kanal", true);
+    const destinationId = isPromotionCommand
+      ? interaction.options.getChannel("kanal", true).id
+      : roleChangeLogChannelId;
     if (!reason) {
       await interaction.reply({ content: "Powód zmiany roli nie może być pusty.", ephemeral: true });
       return;
     }
-    if (destination.type !== ChannelType.GuildText) {
-      await interaction.reply({ content: "Wybierz zwykły kanał tekstowy.", ephemeral: true });
-      return;
+    const destination = await interaction.guild.channels.fetch(destinationId);
+    if (!destination || destination.type !== ChannelType.GuildText) {
+      throw new Error(`Kanał logów ${destinationId} nie istnieje albo nie jest kanałem tekstowym.`);
     }
     if (user.id === interaction.user.id) {
       await interaction.reply({ content: "Nie możesz użyć tej komendy na sobie.", ephemeral: true });
@@ -914,6 +1203,262 @@ async function handleCommand(interaction) {
 }
 
 async function handleButton(interaction) {
+  if (
+    interaction.customId.startsWith("leave:accept:") ||
+    interaction.customId.startsWith("leave:end:") ||
+    interaction.customId.startsWith("leave:end-reason:")
+  ) {
+    if (!canSubmitModerationLog(interaction)) {
+      await interaction.reply({
+        content: "Tylko upoważniony personel może rozpatrywać i kończyć urlopy.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const [, action, userId] = interaction.customId.split(":");
+    if (!isLeaveReviewMessage(interaction, userId)) {
+      await interaction.reply({ content: "Ten wpis nie jest prawidłowym wnioskiem o urlop.", ephemeral: true });
+      return;
+    }
+    const embed = interaction.message.embeds[0];
+    const currentStatus = getEmbedField(embed, "Status");
+    if (action === "end-reason") {
+      if (currentStatus !== "Urlop zaakceptowany") {
+        await interaction.reply({ content: "Można zakończyć tylko zaakceptowany urlop.", ephemeral: true });
+        return;
+      }
+      const modal = new ModalBuilder()
+        .setCustomId(`leave:end-reason-submit:${interaction.message.id}`)
+        .setTitle("Zakończenie urlopu");
+      const reason = new TextInputBuilder()
+        .setCustomId("reason")
+        .setLabel("Powód zakończenia urlopu")
+        .setStyle(TextInputStyle.Paragraph)
+        .setMaxLength(500)
+        .setRequired(true);
+      modal.addComponents(new ActionRowBuilder().addComponents(reason));
+      await interaction.showModal(modal);
+      return;
+    }
+
+    const nextStatus = action === "accept"
+      ? "Urlop zaakceptowany"
+      : action === "end"
+        ? "Urlop zakończony"
+        : null;
+    const expectedStatus = action === "accept" ? "Oczekuje na akceptację" : "Urlop zaakceptowany";
+    if (!nextStatus || currentStatus !== expectedStatus) {
+      await interaction.reply({
+        content: action === "accept"
+          ? "Ten wniosek został już rozpatrzony."
+          : "Można zakończyć tylko zaakceptowany urlop.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (weaponPermitDecisionLocks.has(interaction.message.id)) {
+      await interaction.reply({
+        content: "Ten urlop jest już przetwarzany przez innego członka personelu.",
+        ephemeral: true,
+      });
+      return;
+    }
+    weaponPermitDecisionLocks.add(interaction.message.id);
+    try {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const currentMessage = await interaction.channel.messages.fetch(interaction.message.id);
+        const currentEmbed = currentMessage.embeds[0];
+        if (
+          !isLeaveReviewMessage(interaction, userId, currentMessage) ||
+          getEmbedField(currentEmbed, "Status") !== expectedStatus
+        ) {
+          await interaction.editReply("Ten wniosek został już rozpatrzony.");
+          return;
+        }
+        const updatedEmbed = EmbedBuilder.from(currentEmbed)
+          .setColor(action === "accept" ? 0x2ecc71 : 0x95a5a6)
+          .setFields(
+            ...currentEmbed.fields.map((field) =>
+              field.name === "Status"
+                ? { name: field.name, value: nextStatus, inline: false }
+                : field,
+            ),
+            { name: "Rozpatrzył(a)", value: `<@${interaction.user.id}>`, inline: false },
+          );
+        await currentMessage.edit({
+          embeds: [updatedEmbed],
+          components: [makeLeaveReviewRow(userId, nextStatus)],
+          allowedMentions: { parse: [] },
+        });
+        await interaction.editReply(action === "accept" ? "Wniosek o urlop został zaakceptowany." : "Urlop został zakończony.");
+        const applicant = await client.users.fetch(userId).catch((error) => {
+          console.error(`Nie udało się pobrać użytkownika ${userId} do powiadomienia o urlopie:`, error);
+          return null;
+        });
+        if (applicant) {
+          await applicant.send(
+            action === "accept"
+              ? `Twój wniosek o urlop na serwerze ${interaction.guild.name} został zaakceptowany.`
+              : `Twój urlop na serwerze ${interaction.guild.name} został zakończony.`,
+          ).catch((error) => console.error(`Nie udało się powiadomić użytkownika ${userId} o zmianie statusu urlopu:`, error));
+        }
+        return;
+    } finally {
+      weaponPermitDecisionLocks.delete(interaction.message.id);
+    }
+  }
+
+  if (interaction.customId === "weapon-permit:apply") {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const config = webhookConfigs[interaction.guildId];
+    if (
+      !config?.weaponPermitReviewChannelId ||
+      !config.weaponPermitRoleId
+    ) {
+      await interaction.editReply("Panel wniosków nie jest już skonfigurowany. Poproś administratora o ponowne uruchomienie konfiguracji.");
+      return;
+    }
+    if (weaponPermitApplications.has(interaction.user.id)) {
+      await interaction.editReply("Masz już rozpoczęty wniosek. Dokończ go w wiadomości prywatnej albo wpisz „anuluj”.");
+      return;
+    }
+    const permitRole = await interaction.guild.roles.fetch(config.weaponPermitRoleId);
+    if (!permitRole) {
+      throw new Error("Skonfigurowana rola pozwolenia na broń już nie istnieje.");
+    }
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (member.roles.cache.has(permitRole.id)) {
+      await interaction.editReply("Masz już rolę pozwolenia na broń.");
+      return;
+    }
+
+    const application = {
+      user: interaction.user,
+      guildId: interaction.guildId,
+      reviewChannelId: config.weaponPermitReviewChannelId,
+      answers: [],
+      processing: false,
+      timeout: null,
+    };
+    application.timeout = setTimeout(() => {
+      clearWeaponPermitApplication(interaction.user.id);
+      interaction.user.send("Twój wniosek o pozwolenie na broń wygasł, ponieważ nie otrzymaliśmy odpowiedzi w ciągu 15 minut.")
+        .catch((error) => console.error("Nie udało się powiadomić o wygaśnięciu wniosku:", error));
+    }, weaponPermitApplicationTimeoutMs);
+    weaponPermitApplications.set(interaction.user.id, application);
+    try {
+      await sendWeaponPermitQuestion(application);
+    } catch (error) {
+      clearWeaponPermitApplication(interaction.user.id);
+      await interaction.editReply("Nie udało mi się wysłać Ci wiadomości prywatnej. Włącz możliwość otrzymywania DM-ów od członków serwera i spróbuj ponownie.");
+      console.error("Nie udało się rozpocząć wniosku o pozwolenie na broń w DM:", error);
+      return;
+    }
+    await interaction.editReply("Wysłałem pierwsze pytanie w wiadomości prywatnej. Odpowiedz tam, aby kontynuować.");
+    return;
+  }
+
+  if (
+    interaction.customId.startsWith("weapon-permit:approve:") ||
+    interaction.customId.startsWith("weapon-permit:reject:")
+  ) {
+    const lockKey = interaction.message.id;
+    if (weaponPermitDecisionLocks.has(lockKey)) {
+      await interaction.reply({
+        content: "Ten wniosek jest już rozpatrywany przez innego członka personelu.",
+        ephemeral: true,
+      });
+      return;
+    }
+    weaponPermitDecisionLocks.add(lockKey);
+    try {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      if (!canSubmitModerationLog(interaction)) {
+        await interaction.editReply("Tylko upoważniony personel może rozpatrywać wnioski.");
+        return;
+      }
+
+      const [, decision, applicantId] = interaction.customId.split(":");
+      const config = webhookConfigs[interaction.guildId];
+      const embed = interaction.message.embeds[0];
+      const expectedFooter = `weapon-permit:${interaction.guildId}:${applicantId}`;
+      if (
+        !applicantId ||
+        interaction.channelId !== config?.weaponPermitReviewChannelId ||
+        interaction.message.author.id !== client.user.id ||
+        embed?.footer?.text !== expectedFooter ||
+        getEmbedField(embed, "Status wniosku") !== "Oczekuje na decyzję personelu"
+      ) {
+        await interaction.editReply("Ten wniosek nie jest prawidłowy, oczekuje już na decyzję albo nie należy do tego kanału.");
+        return;
+      }
+
+      const permitRole = await interaction.guild.roles.fetch(config.weaponPermitRoleId);
+      if (!permitRole) {
+        throw new Error("Skonfigurowana rola pozwolenia na broń już nie istnieje.");
+      }
+      let decisionLabel;
+      if (decision === "approve") {
+        const botMember = await interaction.guild.members.fetchMe();
+        if (
+          permitRole.id === interaction.guild.id ||
+          permitRole.managed ||
+          botMember.roles.highest.comparePositionTo(permitRole) <= 0
+        ) {
+          throw new Error("Rola pozwolenia musi być zwykłą rolą niżej niż najwyższa rola bota.");
+        }
+        const applicant = await interaction.guild.members.fetch(applicantId);
+        if (!applicant.roles.cache.has(permitRole.id)) {
+          await applicant.roles.add(permitRole, `Wniosek zaakceptowany przez ${interaction.user.tag}`);
+        }
+        decisionLabel = "Zaakceptowano";
+      } else if (decision === "reject") {
+        decisionLabel = "Odrzucono";
+      } else {
+        throw new Error("Nieprawidłowa decyzja dla wniosku o pozwolenie na broń.");
+      }
+
+      const updatedEmbed = EmbedBuilder.from(embed)
+        .setColor(decision === "approve" ? 0x2ecc71 : 0xe74c3c)
+        .setFields(
+          ...embed.fields.map((field) =>
+            field.name === "Status wniosku"
+              ? { name: field.name, value: decisionLabel, inline: false }
+              : field,
+          ),
+          { name: "Rozpatrzył(a)", value: `<@${interaction.user.id}>`, inline: false },
+        );
+      await interaction.message.edit({
+        embeds: [updatedEmbed],
+        components: [makeWeaponPermitReviewRow(applicantId, true)],
+        allowedMentions: { parse: [] },
+      });
+      const applicantUser = await client.users.fetch(applicantId).catch((error) => {
+        console.error(`Nie udało się pobrać użytkownika ${applicantId} do powiadomienia o decyzji:`, error);
+        return null;
+      });
+      if (applicantUser) {
+        await applicantUser.send(
+          decision === "approve"
+            ? `Twój wniosek o pozwolenie na broń na serwerze ${interaction.guild.name} został zaakceptowany. Nadano Ci rolę ${permitRole.name}.`
+            : `Twój wniosek o pozwolenie na broń na serwerze ${interaction.guild.name} został odrzucony.`,
+        ).catch((error) => {
+          console.error(`Nie udało się powiadomić użytkownika ${applicantId} o decyzji w sprawie wniosku:`, error);
+        });
+      }
+      await interaction.editReply(
+        decision === "approve"
+          ? `Wniosek zaakceptowano i nadano rolę ${permitRole}.`
+          : "Wniosek odrzucono.",
+      );
+      return;
+    } finally {
+      weaponPermitDecisionLocks.delete(lockKey);
+    }
+  }
+
   if (interaction.customId === "eh-ban-edit") {
     if (!canSubmitModerationLog(interaction)) {
       await interaction.reply({
@@ -1164,6 +1709,113 @@ async function handleButton(interaction) {
 }
 
 async function handleModal(interaction) {
+  if (interaction.customId.startsWith("leave:submit:")) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const [, , reviewChannelId] = interaction.customId.split(":");
+    if (!reviewChannelId) {
+      throw new Error("Nie wybrano kanału do rozpatrywania wniosków o urlop.");
+    }
+    const reviewChannel = await interaction.guild.channels.fetch(reviewChannelId);
+    if (!reviewChannel || reviewChannel.type !== ChannelType.GuildText) {
+      throw new Error("Wybrany kanał wniosków o urlop nie istnieje albo nie jest kanałem tekstowym.");
+    }
+    const botMember = await interaction.guild.members.fetchMe();
+    const requiredPermissions =
+      PermissionFlagsBits.ViewChannel |
+      PermissionFlagsBits.SendMessages |
+      PermissionFlagsBits.EmbedLinks;
+    if (!botMember.permissionsIn(reviewChannel).has(requiredPermissions)) {
+      throw new Error(`Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${reviewChannel}.`);
+    }
+
+    const duration = interaction.fields.getTextInputValue("duration").trim();
+    const reason = interaction.fields.getTextInputValue("reason").trim();
+    const details = interaction.fields.getTextInputValue("details").trim();
+    if (!duration || !reason) {
+      await interaction.editReply("Czas trwania i powód urlopu są wymagane.");
+      return;
+    }
+    const embed = new EmbedBuilder()
+      .setColor(0xf1c40f)
+      .setTitle("Wniosek o urlop")
+      .setDescription(`Wnioskodawca: <@${interaction.user.id}>`)
+      .addFields(
+        { name: "Proponowany czas trwania", value: duration },
+        { name: "Powód", value: reason },
+        ...(details ? [{ name: "Dodatkowe informacje", value: details }] : []),
+        { name: "Status", value: "Oczekuje na akceptację" },
+      )
+      .setFooter({ text: `urlop:${interaction.guildId}:${interaction.user.id}` })
+      .setTimestamp();
+    await reviewChannel.send({
+      embeds: [embed],
+      components: [makeLeaveReviewRow(interaction.user.id, "Oczekuje na akceptację")],
+      allowedMentions: { parse: [] },
+    });
+    await interaction.editReply(`Twój wniosek o urlop został wysłany do rozpatrzenia na ${reviewChannel}.`);
+    return;
+  }
+
+  if (interaction.customId.startsWith("leave:end-reason-submit:")) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (!canSubmitModerationLog(interaction)) {
+      await interaction.editReply("Tylko upoważniony personel może kończyć urlopy.");
+      return;
+    }
+    const messageId = interaction.customId.slice("leave:end-reason-submit:".length);
+    if (weaponPermitDecisionLocks.has(messageId)) {
+      await interaction.editReply("Ten urlop jest już przetwarzany przez innego członka personelu.");
+      return;
+    }
+    weaponPermitDecisionLocks.add(messageId);
+    try {
+      const message = await interaction.channel.messages.fetch(messageId);
+      const embed = message.embeds[0];
+      const applicantId = embed?.footer?.text?.split(":")[2];
+      if (
+        !applicantId ||
+        !isLeaveReviewMessage(interaction, applicantId, message) ||
+        getEmbedField(embed, "Status") !== "Urlop zaakceptowany"
+      ) {
+        await interaction.editReply("Nie znaleziono zaakceptowanego wniosku o urlop do zakończenia.");
+        return;
+      }
+      const reason = interaction.fields.getTextInputValue("reason").trim();
+      if (!reason) {
+        await interaction.editReply("Podaj powód zakończenia urlopu.");
+        return;
+      }
+      const updatedEmbed = EmbedBuilder.from(embed)
+        .setColor(0x95a5a6)
+        .setFields(
+          ...embed.fields.map((field) =>
+            field.name === "Status"
+              ? { name: field.name, value: "Urlop zakończony", inline: false }
+              : field,
+          ),
+          { name: "Powód zakończenia", value: reason, inline: false },
+          { name: "Zakończył(a)", value: `<@${interaction.user.id}>`, inline: false },
+        );
+      await message.edit({
+        embeds: [updatedEmbed],
+        components: [makeLeaveReviewRow(applicantId, "Urlop zakończony")],
+        allowedMentions: { parse: [] },
+      });
+      await interaction.editReply("Urlop został zakończony z podanym powodem.");
+      const applicant = await client.users.fetch(applicantId).catch((error) => {
+        console.error(`Nie udało się pobrać użytkownika ${applicantId} do powiadomienia o urlopie:`, error);
+        return null;
+      });
+      if (applicant) {
+        await applicant.send(`Twój urlop na serwerze ${interaction.guild.name} został zakończony. Powód: ${reason}`)
+          .catch((error) => console.error(`Nie udało się powiadomić użytkownika ${applicantId} o zakończeniu urlopu:`, error));
+      }
+      return;
+    } finally {
+      weaponPermitDecisionLocks.delete(messageId);
+    }
+  }
+
   if (interaction.customId.startsWith("eh-kick-edit-submit:")) {
     if (!canSubmitModerationLog(interaction)) {
       await interaction.reply({
@@ -1264,10 +1916,11 @@ async function handleModal(interaction) {
   }
 
   if (interaction.customId.startsWith("submit-announcement:")) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     if (!canPublishAnnouncement(interaction)) {
-      await interaction.reply({
+      await interaction.editReply({
         content: "Tylko moderatorzy z uprawnieniem Zarządzanie serwerem mogą publikować ogłoszenia.",
-        ephemeral: true,
       });
       return;
     }
@@ -1307,9 +1960,8 @@ async function handleModal(interaction) {
     const title = interaction.fields.getTextInputValue("title").trim();
     const content = interaction.fields.getTextInputValue("content").trim();
     if (!title || !content) {
-      await interaction.reply({
+      await interaction.editReply({
         content: "Tytuł i treść ogłoszenia nie mogą być puste.",
-        ephemeral: true,
       });
       return;
     }
@@ -1321,7 +1973,6 @@ async function handleModal(interaction) {
       .setImage("attachment://zyciowka-rp.gif")
       .setFooter({ text: `Ogłoszenie od ${interaction.user.tag}` })
       .setTimestamp();
-    await interaction.deferReply({ ephemeral: true });
     await destination.send({
       embeds: [announcement],
       files: [
@@ -1608,6 +2259,15 @@ client.once("ready", async () => {
 });
 
 client.on("messageCreate", (message) => {
+  if (!message.guild) {
+    handleWeaponPermitAnswer(message).catch((error) => {
+      clearWeaponPermitApplication(message.author.id);
+      console.error("Nie udało się obsłużyć odpowiedzi na wniosek o pozwolenie na broń:", error);
+      message.author.send("Nie udało się przetworzyć odpowiedzi. Rozpocznij wniosek ponownie z panelu na serwerze.")
+        .catch((replyError) => console.error("Nie udało się powiadomić o błędzie wniosku:", replyError));
+    });
+    return;
+  }
   handleGameWebhookMessage(message).catch((error) => {
     console.error("Nie udało się przetworzyć logu webhooka Emergency Hamburg:", error);
   });
@@ -1672,7 +2332,11 @@ client.on("interactionCreate", async (interaction) => {
   } catch (error) {
     console.error("Błąd obsługi interakcji Discord:", error);
     const content = `Nie udało się wykonać tej czynności: ${error.message}`;
-    if (interaction.deferred || interaction.replied) {
+    if (interaction.deferred) {
+      await interaction.editReply({ content }).catch((replyError) => {
+        console.error("Nie udało się poinformować użytkownika o błędzie:", replyError);
+      });
+    } else if (interaction.replied) {
       await interaction.followUp({ content, ephemeral: true }).catch((replyError) => {
         console.error("Nie udało się poinformować użytkownika o błędzie:", replyError);
       });
