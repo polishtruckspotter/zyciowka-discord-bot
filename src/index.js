@@ -39,6 +39,7 @@ const waitingRoomPingCooldownMs = 30 * 1000;
 const waitingRoomPingCooldowns = new Map();
 const weaponPermitApplications = new Map();
 const weaponPermitDecisionLocks = new Set();
+const botKickChannelQueues = new Map();
 const weaponPermitApplicationTimeoutMs = 15 * 60 * 1000;
 const roleChangeLogChannelId = "1555191573736591421";
 const plusRequestChannelId = "1555191866151145635";
@@ -450,6 +451,80 @@ function buildRobloxBanEmbed({ playerName, duration, reason, appealable, staff, 
   return embed;
 }
 
+async function deleteRecentBotKickChannelMessages(channel) {
+  const cutoff = Date.now() - 5 * 60 * 1000;
+  let before;
+
+  while (true) {
+    const messages = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {}),
+    });
+    if (messages.size === 0) return;
+
+    const recentMessages = messages.filter((candidate) => candidate.createdTimestamp >= cutoff);
+    if (recentMessages.size > 0) {
+      if (recentMessages.size === 1) {
+        await recentMessages.first().delete();
+      } else {
+        await channel.bulkDelete(recentMessages, true);
+      }
+    }
+
+    const oldestMessage = messages.last();
+    if (!oldestMessage || oldestMessage.createdTimestamp < cutoff || messages.size < 100) return;
+    before = oldestMessage.id;
+  }
+}
+
+async function handleBotKickChannelMessage(message) {
+  if (!message.guild || message.author.bot || message.webhookId) return;
+  if (message.channel.type !== ChannelType.GuildText) return;
+
+  const config = webhookConfigs[message.guild.id];
+  if (message.channelId !== config?.botKickChannelId) return;
+
+  const previous = botKickChannelQueues.get(message.channelId) ?? Promise.resolve();
+  const current = previous.then(
+    () => processBotKickChannelMessage(message),
+    () => processBotKickChannelMessage(message),
+  );
+  botKickChannelQueues.set(message.channelId, current);
+  try {
+    await current;
+  } finally {
+    if (botKickChannelQueues.get(message.channelId) === current) {
+      botKickChannelQueues.delete(message.channelId);
+    }
+  }
+}
+
+async function processBotKickChannelMessage(message) {
+  const errors = [];
+  try {
+    await deleteRecentBotKickChannelMessages(message.channel);
+  } catch (error) {
+    errors.push(error);
+  }
+
+  try {
+    const member = await message.guild.members.fetch(message.author.id);
+    await member.kick("Automatyczne wyrzucenie za wysłanie wiadomości na kanale do zgłaszania zhakowanych kont.");
+    console.info(
+      `[bot kick] Wyrzucono ${message.author.tag} (${message.author.id}) z serwera ${message.guild.name} (${message.guild.id}) po wiadomości na ${message.channel}.`,
+    );
+  } catch (error) {
+    errors.push(error);
+  }
+
+  if (errors.length > 0) {
+    throw new AggregateError(
+      errors,
+      `Nie udało się w pełni obsłużyć automatycznego wyrzucenia użytkownika ${message.author.id} na serwerze ${message.guild.id}.`,
+    );
+  }
+}
+
 async function sendModerationLog(interaction, title, target, reason, extra = {}) {
   const entry = {
     guild: interaction.guild.name,
@@ -593,6 +668,124 @@ async function getModerationTarget(interaction, user) {
 }
 
 async function handleCommand(interaction) {
+  if (
+    interaction.commandName === "bot" &&
+    interaction.options.getSubcommand() === "kick"
+  ) {
+    const channel = interaction.options.getChannel("kanal", true);
+    const botMember = await interaction.guild.members.fetchMe();
+    const requiredChannelPermissions =
+      PermissionFlagsBits.ViewChannel |
+      PermissionFlagsBits.SendMessages |
+      PermissionFlagsBits.EmbedLinks |
+      PermissionFlagsBits.ManageMessages;
+
+    if (!botMember.permissions.has(PermissionFlagsBits.KickMembers)) {
+      await interaction.reply({
+        content: "Bot potrzebuje uprawnienia Wyrzucanie członków, aby aktywować tę funkcję.",
+        ephemeral: true,
+      });
+      return;
+    }
+    if (!botMember.permissionsIn(channel).has(requiredChannelPermissions)) {
+      await interaction.reply({
+        content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości, Osadzanie linków i Zarządzanie wiadomościami na ${channel}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0xe74c3c)
+      .setTitle("Kanał do zgłaszania zhakowanych kont")
+      .setDescription(
+        "Ten kanał służy do zgłaszania zhakowanych kont. Każda wysłana tu wiadomość spowoduje automatyczne wyrzucenie jej autora z serwera oraz usunięcie wszystkich wiadomości z tego kanału z ostatnich 5 minut.",
+      );
+    await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+    await updateWebhookConfig(interaction.guildId, {
+      botKickChannelId: channel.id,
+    });
+    await interaction.reply({
+      content: `Automatyczne wyrzucanie skonfigurowano na ${channel}. Każda wiadomość spowoduje wyrzucenie jej autora i usunięcie wiadomości z kanału z ostatnich 5 minut.`,
+      ephemeral: true,
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
+  if (
+    interaction.commandName === "aktywnosc" &&
+    interaction.options.getSubcommandGroup() === "check" &&
+    interaction.options.getSubcommand() === "setup"
+  ) {
+    const panelChannel = interaction.options.getChannel("kanal-panelu", true);
+    const checkChannel = interaction.options.getChannel("kanal-checku", true);
+    const roleToPing = interaction.options.getRole("rola-do-pingowania", true);
+    const allowedRoleIds = Array.from({ length: 22 }, (_, index) =>
+      interaction.options.getRole(index === 0 ? "rola-uprawniona" : `rola-uprawniona-${index + 1}`),
+    )
+      .filter(Boolean)
+      .map((role) => role.id);
+    const botMember = await interaction.guild.members.fetchMe();
+    const panelPermissions = botMember.permissionsIn(panelChannel);
+    const checkPermissions = botMember.permissionsIn(checkChannel);
+    const panelRequiredPermissions =
+      PermissionFlagsBits.ViewChannel |
+      PermissionFlagsBits.SendMessages |
+      PermissionFlagsBits.EmbedLinks;
+    const checkRequiredPermissions =
+      PermissionFlagsBits.ViewChannel |
+      PermissionFlagsBits.SendMessages;
+
+    if (!panelPermissions.has(panelRequiredPermissions)) {
+      await interaction.reply({
+        content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${panelChannel}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    if (!checkPermissions.has(checkRequiredPermissions)) {
+      await interaction.reply({
+        content: `Bot potrzebuje uprawnień Wyświetlanie kanału i Wysyłanie wiadomości na ${checkChannel}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    if (!roleToPing.mentionable && !checkPermissions.has(PermissionFlagsBits.MentionEveryone)) {
+      await interaction.reply({
+        content: `Nie można pingować roli ${roleToPing}. Włącz opcję „Może być wspomniana” dla tej roli albo nadaj botowi uprawnienie wspominania ról na ${checkChannel}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle("Check aktywności")
+      .setDescription("Kliknij przycisk poniżej, aby rozpocząć check aktywności.")
+      .setFooter({ text: `activity-check:${interaction.guildId}` });
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("activity-check:publish")
+        .setLabel("Rozpocznij check aktywności")
+        .setStyle(ButtonStyle.Primary),
+    );
+
+    await panelChannel.send({ embeds: [embed], components: [row] });
+    await updateWebhookConfig(interaction.guildId, {
+      activityCheckPanelChannelId: panelChannel.id,
+      activityCheckChannelId: checkChannel.id,
+      activityCheckRoleId: roleToPing.id,
+      activityCheckAllowedRoleIds: allowedRoleIds,
+    });
+    await interaction.reply({
+      content: `Panel checku aktywności opublikowano na ${panelChannel}. Checki będą wysyłane na ${checkChannel}, pingując ${roleToPing}.`,
+      ephemeral: true,
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
   if (interaction.commandName === "urlop") {
     const reviewChannel = interaction.options.getChannel("kanal-wnioskow", true);
     const modal = new ModalBuilder()
@@ -1263,6 +1456,54 @@ async function handleCommand(interaction) {
 }
 
 async function handleButton(interaction) {
+  if (interaction.customId === "activity-check:publish") {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const config = webhookConfigs[interaction.guildId];
+    if (
+      !config?.activityCheckPanelChannelId ||
+      !config.activityCheckChannelId ||
+      !config.activityCheckRoleId ||
+      !Array.isArray(config.activityCheckAllowedRoleIds)
+    ) {
+      await interaction.editReply("Panel checku aktywności nie jest skonfigurowany. Poproś administratora o ponowne uruchomienie konfiguracji.");
+      return;
+    }
+
+    const panelFooter = interaction.message.embeds[0]?.footer?.text;
+    if (
+      interaction.channelId !== config.activityCheckPanelChannelId ||
+      interaction.message.author.id !== client.user.id ||
+      panelFooter !== `activity-check:${interaction.guildId}`
+    ) {
+      await interaction.editReply("Ten przycisk nie należy do skonfigurowanego panelu checku aktywności.");
+      return;
+    }
+
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!config.activityCheckAllowedRoleIds.some((roleId) => member.roles.cache.has(roleId))) {
+      await interaction.editReply("Nie masz roli uprawnionej do użycia tego przycisku.");
+      return;
+    }
+
+    const [checkChannel, roleToPing] = await Promise.all([
+      interaction.guild.channels.fetch(config.activityCheckChannelId),
+      interaction.guild.roles.fetch(config.activityCheckRoleId),
+    ]);
+    if (!checkChannel || checkChannel.type !== ChannelType.GuildText) {
+      throw new Error("Skonfigurowany kanał checku aktywności już nie istnieje albo nie jest tekstowy.");
+    }
+    if (!roleToPing) {
+      throw new Error("Skonfigurowana rola do pingowania już nie istnieje.");
+    }
+
+    await checkChannel.send({
+      content: `<@&${roleToPing.id}> Rozpoczęto check aktywności.`,
+      allowedMentions: { parse: [], roles: [roleToPing.id] },
+    });
+    await interaction.editReply(`Check aktywności wysłano na ${checkChannel}.`);
+    return;
+  }
+
   if (
     interaction.customId.startsWith("leave:accept:") ||
     interaction.customId.startsWith("leave:end:") ||
@@ -2330,6 +2571,9 @@ client.on("messageCreate", (message) => {
     });
     return;
   }
+  handleBotKickChannelMessage(message).catch((error) => {
+    console.error("Nie udało się obsłużyć wiadomości na kanale automatycznego wyrzucania:", error);
+  });
   handleGameWebhookMessage(message).catch((error) => {
     console.error("Nie udało się przetworzyć logu webhooka Emergency Hamburg:", error);
   });

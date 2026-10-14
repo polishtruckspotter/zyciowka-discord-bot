@@ -4,7 +4,72 @@ const {
   SlashCommandBuilder,
 } = require("discord.js");
 
+const activityCheckCommand = new SlashCommandBuilder()
+  .setName("aktywnosc")
+  .setDescription("Konfiguruje panel checku aktywności.")
+  .addSubcommandGroup((group) =>
+    group
+      .setName("check")
+      .setDescription("Zarządzanie checkiem aktywności.")
+      .addSubcommand((subcommand) => {
+        let setup = subcommand
+          .setName("setup")
+          .setDescription("Publikuje panel do rozpoczynania checku aktywności.")
+          .addChannelOption((option) =>
+            option
+              .setName("kanal-panelu")
+              .setDescription("Kanał, na którym bot opublikuje panel.")
+              .addChannelTypes(ChannelType.GuildText)
+              .setRequired(true),
+          )
+          .addChannelOption((option) =>
+            option
+              .setName("kanal-checku")
+              .setDescription("Kanał, na który trafi check po kliknięciu przycisku.")
+              .addChannelTypes(ChannelType.GuildText)
+              .setRequired(true),
+          )
+          .addRoleOption((option) =>
+            option
+              .setName("rola-do-pingowania")
+              .setDescription("Rola pingowana przy rozpoczęciu checku.")
+              .setRequired(true),
+          );
+
+        for (let roleIndex = 1; roleIndex <= 22; roleIndex += 1) {
+          setup = setup.addRoleOption((option) =>
+            option
+              .setName(roleIndex === 1 ? "rola-uprawniona" : `rola-uprawniona-${roleIndex}`)
+              .setDescription("Rola, której członkowie mogą użyć przycisku.")
+              .setRequired(roleIndex === 1),
+          );
+        }
+
+        return setup;
+      }),
+  )
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
+
+const botKickCommand = new SlashCommandBuilder()
+  .setName("bot")
+  .setDescription("Konfiguruje automatyczne wyrzucanie w wybranym kanale.")
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("kick")
+      .setDescription("Ustawia kanał do automatycznego wyrzucania.")
+      .addChannelOption((option) =>
+        option
+          .setName("kanal")
+          .setDescription("Wiadomości na tym kanale uruchomią automatyczne wyrzucanie.")
+          .addChannelTypes(ChannelType.GuildText)
+          .setRequired(true),
+      ),
+  )
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
+
 const commands = [
+  activityCheckCommand,
+  botKickCommand,
   new SlashCommandBuilder()
     .setName("setup-weryfikacja")
     .setDescription("Konfiguruje panel weryfikacji, role oraz kanał.")
