@@ -462,7 +462,14 @@ async function deleteRecentBotKickChannelMessages(channel) {
     });
     if (messages.size === 0) return;
 
-    const recentMessages = messages.filter((candidate) => candidate.createdTimestamp >= cutoff);
+    const recentMessages = messages.filter(
+      (candidate) =>
+        candidate.createdTimestamp >= cutoff &&
+        !(
+          candidate.author.id === client.user?.id &&
+          candidate.embeds.some((embed) => embed.title === "Kanał do zgłaszania zhakowanych kont")
+        ),
+    );
     if (recentMessages.size > 0) {
       if (recentMessages.size === 1) {
         await recentMessages.first().delete();
@@ -735,7 +742,8 @@ async function handleCommand(interaction) {
       PermissionFlagsBits.EmbedLinks;
     const checkRequiredPermissions =
       PermissionFlagsBits.ViewChannel |
-      PermissionFlagsBits.SendMessages;
+      PermissionFlagsBits.SendMessages |
+      PermissionFlagsBits.EmbedLinks;
 
     if (!panelPermissions.has(panelRequiredPermissions)) {
       await interaction.reply({
@@ -746,7 +754,7 @@ async function handleCommand(interaction) {
     }
     if (!checkPermissions.has(checkRequiredPermissions)) {
       await interaction.reply({
-        content: `Bot potrzebuje uprawnień Wyświetlanie kanału i Wysyłanie wiadomości na ${checkChannel}.`,
+        content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${checkChannel}.`,
         ephemeral: true,
       });
       return;
@@ -1457,7 +1465,6 @@ async function handleCommand(interaction) {
 
 async function handleButton(interaction) {
   if (interaction.customId === "activity-check:publish") {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const config = webhookConfigs[interaction.guildId];
     if (
       !config?.activityCheckPanelChannelId ||
@@ -1465,7 +1472,10 @@ async function handleButton(interaction) {
       !config.activityCheckRoleId ||
       !Array.isArray(config.activityCheckAllowedRoleIds)
     ) {
-      await interaction.editReply("Panel checku aktywności nie jest skonfigurowany. Poproś administratora o ponowne uruchomienie konfiguracji.");
+      await interaction.reply({
+        content: "Panel checku aktywności nie jest skonfigurowany. Poproś administratora o ponowne uruchomienie konfiguracji.",
+        ephemeral: true,
+      });
       return;
     }
 
@@ -1475,32 +1485,45 @@ async function handleButton(interaction) {
       interaction.message.author.id !== client.user.id ||
       panelFooter !== `activity-check:${interaction.guildId}`
     ) {
-      await interaction.editReply("Ten przycisk nie należy do skonfigurowanego panelu checku aktywności.");
+      await interaction.reply({
+        content: "Ten przycisk nie należy do skonfigurowanego panelu checku aktywności.",
+        ephemeral: true,
+      });
       return;
     }
 
     const member = await interaction.guild.members.fetch(interaction.user.id);
     if (!config.activityCheckAllowedRoleIds.some((roleId) => member.roles.cache.has(roleId))) {
-      await interaction.editReply("Nie masz roli uprawnionej do użycia tego przycisku.");
+      await interaction.reply({
+        content: "Nie masz roli uprawnionej do użycia tego przycisku.",
+        ephemeral: true,
+      });
       return;
     }
 
-    const [checkChannel, roleToPing] = await Promise.all([
-      interaction.guild.channels.fetch(config.activityCheckChannelId),
-      interaction.guild.roles.fetch(config.activityCheckRoleId),
-    ]);
-    if (!checkChannel || checkChannel.type !== ChannelType.GuildText) {
-      throw new Error("Skonfigurowany kanał checku aktywności już nie istnieje albo nie jest tekstowy.");
-    }
-    if (!roleToPing) {
-      throw new Error("Skonfigurowana rola do pingowania już nie istnieje.");
-    }
-
-    await checkChannel.send({
-      content: `<@&${roleToPing.id}> Rozpoczęto check aktywności.`,
-      allowedMentions: { parse: [], roles: [roleToPing.id] },
-    });
-    await interaction.editReply(`Check aktywności wysłano na ${checkChannel}.`);
+    const modal = new ModalBuilder()
+      .setCustomId("activity-check:submit")
+      .setTitle("Check aktywności");
+    const goalInput = new TextInputBuilder()
+      .setCustomId("goal")
+      .setLabel("Cel (liczba od 0 do 100000)")
+      .setPlaceholder("Np. 5000")
+      .setStyle(TextInputStyle.Short)
+      .setMinLength(1)
+      .setMaxLength(6)
+      .setRequired(true);
+    const descriptionInput = new TextInputBuilder()
+      .setCustomId("description")
+      .setLabel("Opis checku aktywności")
+      .setPlaceholder("Opisz, co trzeba zrobić i do kiedy.")
+      .setStyle(TextInputStyle.Paragraph)
+      .setMaxLength(1000)
+      .setRequired(true);
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(goalInput),
+      new ActionRowBuilder().addComponents(descriptionInput),
+    );
+    await interaction.showModal(modal);
     return;
   }
 
@@ -2011,6 +2034,65 @@ async function handleButton(interaction) {
 }
 
 async function handleModal(interaction) {
+  if (interaction.customId === "activity-check:submit") {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const config = webhookConfigs[interaction.guildId];
+    if (
+      !config?.activityCheckPanelChannelId ||
+      !config.activityCheckChannelId ||
+      !config.activityCheckRoleId ||
+      !Array.isArray(config.activityCheckAllowedRoleIds)
+    ) {
+      await interaction.editReply("Panel checku aktywności nie jest już skonfigurowany. Poproś administratora o ponowne uruchomienie konfiguracji.");
+      return;
+    }
+
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!config.activityCheckAllowedRoleIds.some((roleId) => member.roles.cache.has(roleId))) {
+      await interaction.editReply("Nie masz roli uprawnionej do opublikowania checku aktywności.");
+      return;
+    }
+
+    const rawGoal = interaction.fields.getTextInputValue("goal").trim();
+    if (!/^\d{1,6}$/.test(rawGoal) || Number(rawGoal) > 100000) {
+      await interaction.editReply("Cel musi być liczbą całkowitą od 0 do 100000.");
+      return;
+    }
+    const description = interaction.fields.getTextInputValue("description").trim();
+    if (!description) {
+      await interaction.editReply("Opis checku aktywności nie może być pusty.");
+      return;
+    }
+
+    const [checkChannel, roleToPing] = await Promise.all([
+      interaction.guild.channels.fetch(config.activityCheckChannelId),
+      interaction.guild.roles.fetch(config.activityCheckRoleId),
+    ]);
+    if (!checkChannel || checkChannel.type !== ChannelType.GuildText) {
+      throw new Error("Skonfigurowany kanał checku aktywności już nie istnieje albo nie jest tekstowy.");
+    }
+    if (!roleToPing) {
+      throw new Error("Skonfigurowana rola do pingowania już nie istnieje.");
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle("Check aktywności")
+      .setDescription(description)
+      .addFields(
+        { name: "Cel", value: Number(rawGoal).toLocaleString("pl-PL"), inline: true },
+        { name: "Opublikował(a)", value: `<@${interaction.user.id}>`, inline: true },
+      )
+      .setTimestamp();
+    await checkChannel.send({
+      content: `<@&${roleToPing.id}> Rozpoczęto check aktywności!`,
+      embeds: [embed],
+      allowedMentions: { parse: [], roles: [roleToPing.id] },
+    });
+    await interaction.editReply(`Check aktywności z celem ${rawGoal} opublikowano na ${checkChannel}.`);
+    return;
+  }
+
   if (interaction.customId.startsWith("leave:submit:")) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const [, , reviewChannelId] = interaction.customId.split(":");
