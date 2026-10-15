@@ -89,7 +89,7 @@ const weaponPermitQuestions = [
   },
 ];
 const webhookConfigPath = path.join(__dirname, "..", "data", "eh-webhook-config.json");
-const announcementVideoPath = path.join(__dirname, "..", "zyciowka-rp.mp4");
+const announcementGifPath = path.join(__dirname, "..", "zyciowka-rp.gif");
 const weaponPermitIdentityRequestsPath = path.join(
   __dirname,
   "..",
@@ -2896,11 +2896,12 @@ async function handleModal(interaction) {
       .setColor(0x5865f2)
       .setTitle(title)
       .setDescription(content)
-      .setFooter({ text: `Ogłoszenie od ${interaction.user.tag} • Wideo w załączniku` })
+      .setImage("attachment://zyciowka-rp.gif")
+      .setFooter({ text: `Ogłoszenie od ${interaction.user.tag} • Animowany GIF` })
       .setTimestamp();
-    await fs.access(announcementVideoPath).catch((error) => {
+    await fs.access(announcementGifPath).catch((error) => {
       if (error.code === "ENOENT") {
-        throw new Error(`Nie znaleziono pliku wideo ogłoszenia: ${announcementVideoPath}`);
+        throw new Error(`Nie znaleziono animacji ogłoszenia: ${announcementGifPath}`);
       }
       throw error;
     });
@@ -2912,8 +2913,8 @@ async function handleModal(interaction) {
     await destination.send({
       embeds: [announcement],
       files: [
-        new AttachmentBuilder(announcementVideoPath, {
-          name: "polonia-rp-ogloszenie.mp4",
+        new AttachmentBuilder(announcementGifPath, {
+          name: "zyciowka-rp.gif",
         }),
       ],
       allowedMentions: { parse: [] },
