@@ -120,13 +120,23 @@ async function handleWeaponPermitIdentityAnswer(message) {
   }
   weaponPermitIdentityRequestLocks.add(message.author.id);
   try {
-    const robloxIdentity = message.content.trim();
-    const isUsername = /^@?[A-Za-z0-9_]{1,20}$/.test(robloxIdentity);
-    const isUserId = /^[1-9]\d{0,19}$/.test(robloxIdentity);
-    if (!isUsername && !isUserId) {
-      await message.reply("Wyślij nazwę Roblox (np. @NazwaGracza) albo numeryczne ID Roblox.");
+    const submittedIdentity = message.content.trim();
+    const username = submittedIdentity.startsWith("@")
+      ? submittedIdentity.slice(1)
+      : submittedIdentity;
+    const isUsername = /^[A-Za-z0-9_]{3,20}$/.test(username);
+    const isUserId = /^[1-9]\d{0,19}$/.test(submittedIdentity);
+    if (
+      (submittedIdentity.startsWith("@") && !isUsername) ||
+      (!isUserId && !isUsername) ||
+      (/^\d+$/.test(submittedIdentity) && !isUserId)
+    ) {
+      await message.reply("Wyślij nazwę Roblox (np. @NazwaGracza) albo prawidłowe numeryczne ID Roblox.");
       return true;
     }
+    const profile = isUserId
+      ? await getRobloxProfile(submittedIdentity)
+      : await getRobloxProfileByUsername(username);
 
     const guild = await client.guilds.fetch(request.guildId);
     const permitChannel = await guild.channels.fetch(weaponPermitPublicationChannelId);
@@ -137,11 +147,22 @@ async function handleWeaponPermitIdentityAnswer(message) {
     const permitEmbed = new EmbedBuilder()
       .setColor(0x2ecc71)
       .setTitle("Pozwolenie na broń")
+      .setURL(`https://www.roblox.com/users/${profile.id}/profile`)
       .addFields(
         { name: "Członek Discord", value: `<@${message.author.id}>`, inline: true },
-        { name: "Roblox", value: robloxIdentity, inline: true },
+        {
+          name: "Konto Roblox",
+          value: `[@${profile.username}](https://www.roblox.com/users/${profile.id}/profile)`,
+          inline: true,
+        },
+        {
+          name: "ID Roblox",
+          value: `[${profile.id}](https://www.roblox.com/users/${profile.id}/profile)`,
+          inline: true,
+        },
         { name: "Rodzaj broni", value: request.weaponType },
       )
+      .setThumbnail(profile.imageUrl)
       .setTimestamp();
     await permitChannel.send({
       content: `<@${message.author.id}> Twoje pozwolenie na broń jest gotowe.`,
@@ -170,8 +191,13 @@ async function getRobloxProfile(userId) {
   }
 
   const profile = await userResponse.json();
-  if (typeof profile.name !== "string" || !profile.name) {
-    throw new Error("Roblox API nie zwróciło nazwy konta dla podanego ID.");
+  if (
+    !Number.isSafeInteger(profile.id) ||
+    profile.id <= 0 ||
+    typeof profile.name !== "string" ||
+    !profile.name
+  ) {
+    throw new Error("Roblox API nie zwróciło prawidłowych danych konta dla podanego ID.");
   }
 
   const thumbnailResponse = await fetch(
@@ -188,7 +214,27 @@ async function getRobloxProfile(userId) {
     throw new Error("Roblox API nie zwróciło awatara dla tego konta.");
   }
 
-  return { username: profile.name, imageUrl };
+  return { id: String(profile.id), username: profile.name, imageUrl };
+}
+
+async function getRobloxProfileByUsername(username) {
+  const response = await fetch("https://users.roblox.com/v1/usernames/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new Error(`Roblox API zwróciło błąd podczas wyszukiwania nazwy konta (HTTP ${response.status}).`);
+  }
+
+  const result = await response.json();
+  const user = Array.isArray(result?.data) ? result.data[0] : null;
+  if (!user || !Number.isSafeInteger(user.id) || user.id <= 0) {
+    throw new Error(`Nie znaleziono konta Roblox o nazwie „${username}”. Sprawdź nazwę i spróbuj ponownie.`);
+  }
+
+  return getRobloxProfile(String(user.id));
 }
 
 function makeChallenge() {
@@ -3035,7 +3081,7 @@ client.on("messageCreate", (message) => {
     if (weaponPermitIdentityRequests[message.author.id]) {
       handleWeaponPermitIdentityAnswer(message).catch((error) => {
         console.error("Nie udało się opublikować pozwolenia na broń:", error);
-        message.reply("Nie udało się opublikować pozwolenia. Twoja odpowiedź została zachowana; spróbuj ponownie później.")
+        message.reply(`Nie udało się opublikować pozwolenia: ${error.message} Twoja odpowiedź została zachowana; sprawdź dane i spróbuj ponownie.`)
           .catch((replyError) => console.error("Nie udało się poinformować o błędzie pozwolenia:", replyError));
       });
     } else {
