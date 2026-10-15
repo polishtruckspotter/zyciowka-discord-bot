@@ -1,8 +1,8 @@
 {
-  "name": "zyciowka-rp-bot",
+  "name": "polonia-rp-bot",
   "version": "1.0.0",
   "private": true,
-  "description": " Polish Discord moderation and math verification bot for Zyciówka RP",
+  "description": "Polish Discord moderation and math verification bot for Polonia RP",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",

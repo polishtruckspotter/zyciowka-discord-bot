@@ -4,7 +4,6 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const {
   ActionRowBuilder,
-  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   Client,
@@ -39,10 +38,12 @@ const waitingRoomPingCooldownMs = 30 * 1000;
 const waitingRoomPingCooldowns = new Map();
 const weaponPermitApplications = new Map();
 const weaponPermitDecisionLocks = new Set();
+const weaponPermitIdentityRequestLocks = new Set();
 const botKickChannelQueues = new Map();
 const weaponPermitApplicationTimeoutMs = 15 * 60 * 1000;
 const roleChangeLogChannelId = "1555191573736591421";
 const plusRequestChannelId = "1555191866151145635";
+const weaponPermitPublicationChannelId = "1560304974716604537";
 const praiseLogChannelIds = {
   skarga: "1556261784304746556",
   pochwala: "1556261886037860403",
@@ -84,10 +85,73 @@ const weaponPermitQuestions = [
   },
 ];
 const webhookConfigPath = path.join(__dirname, "..", "data", "eh-webhook-config.json");
+const weaponPermitIdentityRequestsPath = path.join(
+  __dirname,
+  "..",
+  "data",
+  "weapon-permit-identity-requests.json",
+);
+const activityCheckParticipantsPath = path.join(
+  __dirname,
+  "..",
+  "data",
+  "activity-check-participants.json",
+);
+let activityCheckUpdateQueue = Promise.resolve();
+let weaponPermitIdentityRequests = {};
 let webhookConfigs = {};
 
 function getMissingConfiguration(keys) {
   return keys.filter((key) => !process .env[key]);
+}
+
+async function handleWeaponPermitIdentityAnswer(message) {
+  if (message.guild || message.author.bot) return false;
+  const request = weaponPermitIdentityRequests[message.author.id];
+  if (!request) return false;
+
+  if (weaponPermitIdentityRequestLocks.has(message.author.id)) {
+    await message.reply("Twoja odpowiedź jest już przetwarzana. Poczekaj chwilę.");
+    return true;
+  }
+  weaponPermitIdentityRequestLocks.add(message.author.id);
+  try {
+    const robloxIdentity = message.content.trim();
+    const isUsername = /^@?[A-Za-z0-9_]{1,20}$/.test(robloxIdentity);
+    const isUserId = /^[1-9]\d{0,19}$/.test(robloxIdentity);
+    if (!isUsername && !isUserId) {
+      await message.reply("Wyślij nazwę Roblox (np. @NazwaGracza) albo numeryczne ID Roblox.");
+      return true;
+    }
+
+    const guild = await client.guilds.fetch(request.guildId);
+    const permitChannel = await guild.channels.fetch(weaponPermitPublicationChannelId);
+    if (!permitChannel || permitChannel.type !== ChannelType.GuildText) {
+      throw new Error(`Kanał publikacji pozwoleń ${weaponPermitPublicationChannelId} nie istnieje albo nie jest tekstowy.`);
+    }
+
+    const permitEmbed = new EmbedBuilder()
+      .setColor(0x2ecc71)
+      .setTitle("Pozwolenie na broń")
+      .addFields(
+        { name: "Członek Discord", value: `<@${message.author.id}>`, inline: true },
+        { name: "Roblox", value: robloxIdentity, inline: true },
+        { name: "Rodzaj broni", value: request.weaponType },
+      )
+      .setTimestamp();
+    await permitChannel.send({
+      content: `<@${message.author.id}> Twoje pozwolenie na broń jest gotowe.`,
+      embeds: [permitEmbed],
+      allowedMentions: { parse: [], users: [message.author.id] },
+    });
+    await updateWeaponPermitIdentityRequests(async (requests) => {
+      delete requests[message.author.id];
+    });
+    await message.reply("Dziękuję! Twoje pozwolenie na broń zostało opublikowane.");
+    return true;
+  } finally {
+    weaponPermitIdentityRequestLocks.delete(message.author.id);
+  }
 }
 
 async function getRobloxProfile(userId) {
@@ -172,6 +236,90 @@ async function updateWebhookConfig(guildId, updates) {
   await fs.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   await fs.rename(temporaryPath, webhookConfigPath);
   webhookConfigs = next;
+}
+
+async function loadWeaponPermitIdentityRequests() {
+  try {
+    const contents = await fs.readFile(weaponPermitIdentityRequestsPath, "utf8");
+    const parsed = JSON.parse(contents);
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      !Object.values(parsed).every(
+        (request) =>
+          request &&
+          typeof request.guildId === "string" &&
+          typeof request.weaponType === "string",
+      )
+    ) {
+      throw new Error("Plik oczekujących danych Roblox do pozwolenia musi zawierać obiekt JSON.");
+    }
+    weaponPermitIdentityRequests = parsed;
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      weaponPermitIdentityRequests = {};
+      return;
+    }
+    throw error;
+  }
+}
+
+async function updateWeaponPermitIdentityRequests(update) {
+  const next = { ...weaponPermitIdentityRequests };
+  await update(next);
+  await fs.mkdir(path.dirname(weaponPermitIdentityRequestsPath), { recursive: true });
+  const temporaryPath = `${weaponPermitIdentityRequestsPath}.${process.pid}.tmp`;
+  await fs.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  await fs.rename(temporaryPath, weaponPermitIdentityRequestsPath);
+  weaponPermitIdentityRequests = next;
+}
+
+async function updateActivityCheckParticipants(update) {
+  const pendingUpdate = activityCheckUpdateQueue.catch(() => {}).then(update);
+  activityCheckUpdateQueue = pendingUpdate;
+  return pendingUpdate;
+}
+
+async function loadActivityCheckParticipants() {
+  try {
+    const contents = await fs.readFile(activityCheckParticipantsPath, "utf8");
+    const parsed = JSON.parse(contents);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Plik uczestników checków aktywności musi zawierać obiekt JSON.");
+    }
+    return parsed;
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
+}
+
+async function saveActivityCheckParticipants(participantsByMessage) {
+  await fs.mkdir(path.dirname(activityCheckParticipantsPath), { recursive: true });
+  const temporaryPath = `${activityCheckParticipantsPath}.${process.pid}.tmp`;
+  await fs.writeFile(temporaryPath, `${JSON.stringify(participantsByMessage, null, 2)}\n`, "utf8");
+  await fs.rename(temporaryPath, activityCheckParticipantsPath);
+}
+
+function formatActivityCheckParticipants(participants) {
+  if (participants.length === 0) {
+    return "Nikt jeszcze nie potwierdził udziału.";
+  }
+
+  const names = participants.map(({ displayName }) => `• ${displayName.replace(/[\r\n]/g, " ")}`);
+  let list = "";
+  for (let index = 0; index < names.length; index += 1) {
+    const remaining = names.length - index - 1;
+    const suffix = remaining > 0 ? `\n… i jeszcze ${remaining}` : "";
+    if (`${list}${list ? "\n" : ""}${names[index]}${suffix}`.length > 1024) {
+      return `${list}\n… i jeszcze ${participants.length - index}`;
+    }
+    list += `${list ? "\n" : ""}${names[index]}`;
+  }
+  return list;
 }
 
 function canSubmitModerationLog(interaction) {
@@ -438,7 +586,7 @@ function buildRobloxBanEmbed({ playerName, duration, reason, appealable, staff, 
       { name: "Powód", value: limitField(reason, 500) },
       { name: "Odwołanie", value: limitField(appealable, 80) },
     )
-    .setFooter({ text: "Zyciówka RP × Bany Emergency Hamburg" })
+    .setFooter({ text: "Polonia RP × Bany Emergency Hamburg" })
     .setTimestamp();
 
   if (originalLog) {
@@ -643,7 +791,7 @@ async function handleGameWebhookMessage(message) {
         : []),
       { name: "Webhook źródłowy", value: message.author.username.slice(0, 256) },
     )
-    .setFooter({ text: "Zyciówka RP × Emergency Hamburg" })
+    .setFooter({ text: "Polonia RP × Emergency Hamburg" })
     .setTimestamp(message.createdAt);
   await destination.send({
     embeds: [embed],
@@ -745,6 +893,13 @@ async function handleCommand(interaction) {
       PermissionFlagsBits.SendMessages |
       PermissionFlagsBits.EmbedLinks;
 
+    if (roleToPing.id === interaction.guildId) {
+      await interaction.reply({
+        content: "Nie można użyć roli @everyone do pingowania checku aktywności. Wybierz konkretną rolę.",
+        ephemeral: true,
+      });
+      return;
+    }
     if (!panelPermissions.has(panelRequiredPermissions)) {
       await interaction.reply({
         content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${panelChannel}.`,
@@ -911,7 +1066,7 @@ async function handleCommand(interaction) {
 
     const embed = new EmbedBuilder()
       .setColor(0x2ecc71)
-      .setTitle("Weryfikacja — Zyciówka RP")
+      .setTitle("Weryfikacja — Polonia RP")
       .setDescription(
         `Kliknij przycisk poniżej i rozwiąż krótkie działanie matematyczne.\nPo poprawnej odpowiedzi otrzymasz role ${rolesToGive.join(" i ")}, a rola ${roleToRemove} zostanie zabrana.`,
       )
@@ -980,9 +1135,9 @@ async function handleCommand(interaction) {
 
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
-      .setTitle("Ogłoszenia — Zyciówka RP")
+      .setTitle("Ogłoszenia — Polonia RP")
       .setDescription("Kliknij przycisk, aby napisać i opublikować ogłoszenie.")
-      .setFooter({ text: "Ogłoszenia × Zyciówka RP" });
+      .setFooter({ text: "Ogłoszenia × Polonia RP" });
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`create-announcement:${destination.id}:${roleToPing?.id ?? "none"}`)
@@ -1037,7 +1192,7 @@ async function handleCommand(interaction) {
     });
     const panelEmbed = new EmbedBuilder()
       .setColor(0x5865f2)
-      .setTitle("Pozwolenie na broń — Zyciówka RP")
+      .setTitle("Pozwolenie na broń — Polonia RP")
       .setDescription(
         "Kliknij przycisk poniżej, aby wypełnić wniosek w wiadomości prywatnej. Personel rozpatrzy go na osobnym kanale.",
       )
@@ -1106,7 +1261,7 @@ async function handleCommand(interaction) {
           ? "Wybierz rodzaj akcji do zapisania. Raport zostanie wysłany na kanał przeznaczony na bany i wyrzucenia."
           : "Zapisz użycie admin car lub fly. Raport zostanie wysłany na osobny kanał pozostałych akcji.",
       )
-      .setFooter({ text: "Logi moderacji × Zyciówka RP" });
+      .setFooter({ text: "Logi moderacji × Polonia RP" });
     const actions = isBanKickPanel
       ? [
           ["kick", "Wyrzucenie", ButtonStyle.Secondary],
@@ -1159,7 +1314,7 @@ async function handleCommand(interaction) {
       .setColor(0x5865f2)
       .setTitle("Dowody osobiste")
       .setDescription("Kliknij przycisk poniżej, aby wyrobić dowód osobisty.")
-      .setFooter({ text: "Dowody osobiste × Zyciówka RP" });
+      .setFooter({ text: "Dowody osobiste × Polonia RP" });
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`create-id-card:${destination.id}`)
@@ -1464,6 +1619,75 @@ async function handleCommand(interaction) {
 }
 
 async function handleButton(interaction) {
+  if (interaction.customId === "activity-check:participate") {
+    const config = webhookConfigs[interaction.guildId];
+    const checkEmbed = interaction.message.embeds[0];
+    if (
+      interaction.channelId !== config?.activityCheckChannelId ||
+      interaction.message.author.id !== client.user.id ||
+      checkEmbed?.title !== "Check aktywności" ||
+      !checkEmbed.fields.some((field) => field.name === "Cel") ||
+      !checkEmbed.fields.some((field) => field.name === "Opublikował(a)")
+    ) {
+      await interaction.reply({
+        content: "Ten przycisk nie należy do opublikowanego checku aktywności.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const messageId = interaction.message.id;
+    const participation = await updateActivityCheckParticipants(async () => {
+      const participantsByMessage = await loadActivityCheckParticipants();
+      const participants = participantsByMessage[messageId] ?? [];
+      if (
+        !Array.isArray(participants) ||
+        !participants.every(
+          (participant) =>
+            participant &&
+            typeof participant.userId === "string" &&
+            typeof participant.displayName === "string",
+        )
+      ) {
+        throw new Error("Dane uczestników tego checku aktywności są nieprawidłowe.");
+      }
+
+      const participantIndex = participants.findIndex(
+        (participant) => participant.userId === interaction.user.id,
+      );
+      const joined = participantIndex === -1;
+      if (joined) {
+        participants.push({
+          userId: interaction.user.id,
+          displayName: member.displayName,
+        });
+      } else {
+        participants.splice(participantIndex, 1);
+      }
+
+      participantsByMessage[messageId] = participants;
+      await saveActivityCheckParticipants(participantsByMessage);
+
+      const updatedEmbed = EmbedBuilder.from(checkEmbed).setFields(
+        ...checkEmbed.fields.filter((field) => field.name !== "Uczestnicy"),
+        {
+          name: `Uczestnicy (${participants.length})`,
+          value: formatActivityCheckParticipants(participants),
+        },
+      );
+      await interaction.message.edit({ embeds: [updatedEmbed] });
+      return { joined };
+    });
+    await interaction.editReply(
+      participation.joined
+        ? "Potwierdzono Twój udział w checku."
+        : "Wycofano Twoje potwierdzenie udziału.",
+    );
+    return;
+  }
+
   if (interaction.customId === "activity-check:publish") {
     const config = webhookConfigs[interaction.guildId];
     if (
@@ -1490,6 +1714,9 @@ async function handleButton(interaction) {
         ephemeral: true,
       });
       return;
+    }
+    if (config.activityCheckRoleId === interaction.guildId) {
+      throw new Error("Skonfigurowano rolę @everyone dla checku aktywności. Uruchom ponownie konfigurację i wybierz konkretną rolę.");
     }
 
     const member = await interaction.guild.members.fetch(interaction.user.id);
@@ -1725,6 +1952,7 @@ async function handleButton(interaction) {
         throw new Error("Skonfigurowana rola pozwolenia na broń już nie istnieje.");
       }
       let decisionLabel;
+      let approvedApplicant;
       if (decision === "approve") {
         const botMember = await interaction.guild.members.fetchMe();
         if (
@@ -1734,10 +1962,20 @@ async function handleButton(interaction) {
         ) {
           throw new Error("Rola pozwolenia musi być zwykłą rolą niżej niż najwyższa rola bota.");
         }
-        const applicant = await interaction.guild.members.fetch(applicantId);
-        if (!applicant.roles.cache.has(permitRole.id)) {
-          await applicant.roles.add(permitRole, `Wniosek zaakceptowany przez ${interaction.user.tag}`);
+        approvedApplicant = await interaction.guild.members.fetch(applicantId);
+        if (!approvedApplicant.roles.cache.has(permitRole.id)) {
+          await approvedApplicant.roles.add(permitRole, `Wniosek zaakceptowany przez ${interaction.user.tag}`);
         }
+        const weaponType = getEmbedField(embed, "Rodzaj broni");
+        if (!weaponType) {
+          throw new Error("We wniosku nie ma podanego rodzaju broni.");
+        }
+        await updateWeaponPermitIdentityRequests(async (requests) => {
+          requests[applicantId] = {
+            guildId: interaction.guildId,
+            weaponType,
+          };
+        });
         decisionLabel = "Zaakceptowano";
       } else if (decision === "reject") {
         decisionLabel = "Odrzucono";
@@ -1767,7 +2005,7 @@ async function handleButton(interaction) {
       if (applicantUser) {
         await applicantUser.send(
           decision === "approve"
-            ? `Twój wniosek o pozwolenie na broń na serwerze ${interaction.guild.name} został zaakceptowany. Nadano Ci rolę ${permitRole.name}.`
+            ? `Twój wniosek o pozwolenie na broń na serwerze ${interaction.guild.name} został zaakceptowany. Nadano Ci rolę ${permitRole.name}.\n\nWyślij tutaj swoją nazwę Roblox (np. @NazwaGracza) albo numeryczne ID Roblox, a opublikuję Twoje pozwolenie na broń.`
             : `Twój wniosek o pozwolenie na broń na serwerze ${interaction.guild.name} został odrzucony.`,
         ).catch((error) => {
           console.error(`Nie udało się powiadomić użytkownika ${applicantId} o decyzji w sprawie wniosku:`, error);
@@ -1797,7 +2035,7 @@ async function handleButton(interaction) {
     const embed = interaction.message.embeds[0];
     if (
       interaction.message.author.id !== client.user.id ||
-      embed?.footer?.text !== "Zyciówka RP × Bany Emergency Hamburg"
+      embed?.footer?.text !== "Polonia RP × Bany Emergency Hamburg"
     ) {
       throw new Error("Można edytować wyłącznie wpisy o banach utworzone przez tego bota.");
     }
@@ -1841,7 +2079,7 @@ async function handleButton(interaction) {
     const embed = interaction.message.embeds[0];
     if (
       interaction.message.author.id !== client.user.id ||
-      embed?.footer?.text !== "Zyciówka RP × Emergency Hamburg"
+      embed?.footer?.text !== "Polonia RP × Emergency Hamburg"
     ) {
       throw new Error("Można edytować wyłącznie wpisy o wyrzuceniach utworzone przez tego bota.");
     }
@@ -2019,7 +2257,7 @@ async function handleButton(interaction) {
 
   const modal = new ModalBuilder()
     .setCustomId(`verify-math-answer:${giveRoleIds.join(":")}:${removeRoleId}`)
-    .setTitle("Weryfikacja Zyciówka RP");
+    .setTitle("Weryfikacja Polonia RP");
   const answerInput = new TextInputBuilder()
     .setCustomId("answer")
     .setLabel(`Ile wynosi ${question}?`)
@@ -2078,15 +2316,23 @@ async function handleModal(interaction) {
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
       .setTitle("Check aktywności")
-      .setDescription(description)
+      .setDescription(`${description}\n\nKliknij przycisk, aby potwierdzić udział. Kliknij ponownie, aby go wycofać.`)
       .addFields(
         { name: "Cel", value: Number(rawGoal).toLocaleString("pl-PL"), inline: true },
         { name: "Opublikował(a)", value: `<@${interaction.user.id}>`, inline: true },
+        { name: "Uczestnicy (0)", value: "Nikt jeszcze nie potwierdził udziału." },
       )
       .setTimestamp();
+    const participationRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("activity-check:participate")
+        .setLabel("Zapisz mnie")
+        .setStyle(ButtonStyle.Success),
+    );
     await checkChannel.send({
       content: `<@&${roleToPing.id}> Rozpoczęto check aktywności!`,
       embeds: [embed],
+      components: [participationRow],
       allowedMentions: { parse: [], roles: [roleToPing.id] },
     });
     await interaction.editReply(`Check aktywności z celem ${rawGoal} opublikowano na ${checkChannel}.`);
@@ -2218,7 +2464,7 @@ async function handleModal(interaction) {
     const existingEmbed = message.embeds[0];
     if (
       message.author.id !== client.user.id ||
-      existingEmbed?.footer?.text !== "Zyciówka RP × Emergency Hamburg"
+      existingEmbed?.footer?.text !== "Polonia RP × Emergency Hamburg"
     ) {
       throw new Error("Można edytować wyłącznie wpisy o wyrzuceniach utworzone przez tego bota.");
     }
@@ -2264,7 +2510,7 @@ async function handleModal(interaction) {
     const existingEmbed = message.embeds[0];
     if (
       message.author.id !== client.user.id ||
-      existingEmbed?.footer?.text !== "Zyciówka RP × Bany Emergency Hamburg"
+      existingEmbed?.footer?.text !== "Polonia RP × Bany Emergency Hamburg"
     ) {
       throw new Error("Można edytować wyłącznie wpisy o banach utworzone przez tego bota.");
     }
@@ -2354,17 +2600,11 @@ async function handleModal(interaction) {
       .setColor(0x5865f2)
       .setTitle(title)
       .setDescription(content)
-      .setImage("attachment://zyciowka-rp.gif")
       .setFooter({ text: `Ogłoszenie od ${interaction.user.tag}` })
       .setTimestamp();
     await interaction.deferReply({ ephemeral: true });
     await destination.send({
       embeds: [announcement],
-      files: [
-        new AttachmentBuilder(path.join(__dirname, "..", "zyciówka rp.gif"), {
-          name: "zyciowka-rp.gif",
-        }),
-      ],
       allowedMentions: { parse: [] },
     });
     if (roleToPing) {
@@ -2466,7 +2706,7 @@ async function handleModal(interaction) {
         { name: "Powód", value: reason },
         { name: "Osoba zgłaszająca", value: interaction.user.tag },
       )
-      .setFooter({ text: "Emergency Hamburg × Zyciówka RP" })
+      .setFooter({ text: "Emergency Hamburg × Polonia RP" })
       .setTimestamp();
 
     if (action === "admin-car" || action === "fly") {
@@ -2530,7 +2770,7 @@ async function handleModal(interaction) {
         { name: "ID Roblox", value: robloxId },
       )
       .setThumbnail(profile.imageUrl)
-      .setFooter({ text: "Dowody osobiste × Zyciówka RP" });
+      .setFooter({ text: "Dowody osobiste × Polonia RP" });
 
     await destination.send({ embeds: [card] });
     await interaction.editReply({ content: `Dowód osobisty został wysłany na kanał ${destination}.` });
@@ -2645,12 +2885,20 @@ client.once("ready", async () => {
 
 client.on("messageCreate", (message) => {
   if (!message.guild) {
-    handleWeaponPermitAnswer(message).catch((error) => {
-      clearWeaponPermitApplication(message.author.id);
-      console.error("Nie udało się obsłużyć odpowiedzi na wniosek o pozwolenie na broń:", error);
-      message.author.send("Nie udało się przetworzyć odpowiedzi. Rozpocznij wniosek ponownie z panelu na serwerze.")
-        .catch((replyError) => console.error("Nie udało się powiadomić o błędzie wniosku:", replyError));
-    });
+    if (weaponPermitIdentityRequests[message.author.id]) {
+      handleWeaponPermitIdentityAnswer(message).catch((error) => {
+        console.error("Nie udało się opublikować pozwolenia na broń:", error);
+        message.reply("Nie udało się opublikować pozwolenia. Twoja odpowiedź została zachowana; spróbuj ponownie później.")
+          .catch((replyError) => console.error("Nie udało się poinformować o błędzie pozwolenia:", replyError));
+      });
+    } else {
+      handleWeaponPermitAnswer(message).catch((error) => {
+        clearWeaponPermitApplication(message.author.id);
+        console.error("Nie udało się obsłużyć odpowiedzi na wniosek o pozwolenie na broń:", error);
+        message.author.send("Nie udało się przetworzyć odpowiedzi. Rozpocznij wniosek ponownie z panelu na serwerze.")
+          .catch((replyError) => console.error("Nie udało się powiadomić o błędzie wniosku:", replyError));
+      });
+    }
     return;
   }
   handleBotKickChannelMessage(message).catch((error) => {
@@ -2741,10 +2989,10 @@ if (missing.length) {
   console.error(`Brak wymaganych zmiennych środowiskowych: ${missing.join(", ")}. Skopiuj .env.example do .env i uzupełnij wartości.`);
   process.exitCode = 1;
 } else {
-  loadWebhookConfigs()
+  Promise.all([loadWebhookConfigs(), loadWeaponPermitIdentityRequests()])
     .then(() => client.login(process.env.DISCORD_TOKEN))
     .catch((error) => {
-      console.error("Nie udało się uruchomić bota lub wczytać konfiguracji webhooków:", error);
+      console.error("Nie udało się uruchomić bota lub wczytać konfiguracji:", error);
       process.exitCode = 1;
     });
 }
