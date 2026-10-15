@@ -4,6 +4,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   Client,
@@ -87,6 +88,7 @@ const weaponPermitQuestions = [
   },
 ];
 const webhookConfigPath = path.join(__dirname, "..", "data", "eh-webhook-config.json");
+const announcementVideoPath = path.join(__dirname, "..", "zyciowka-rp.mp4");
 const weaponPermitIdentityRequestsPath = path.join(
   __dirname,
   "..",
@@ -2730,11 +2732,26 @@ async function handleModal(interaction) {
       .setColor(0x5865f2)
       .setTitle(title)
       .setDescription(content)
-      .setFooter({ text: `Ogłoszenie od ${interaction.user.tag}` })
+      .setFooter({ text: `Ogłoszenie od ${interaction.user.tag} • Wideo w załączniku` })
       .setTimestamp();
+    await fs.access(announcementVideoPath).catch((error) => {
+      if (error.code === "ENOENT") {
+        throw new Error(`Nie znaleziono pliku wideo ogłoszenia: ${announcementVideoPath}`);
+      }
+      throw error;
+    });
+    const botMember = await interaction.guild.members.fetchMe();
+    if (!botMember.permissionsIn(destination).has(PermissionFlagsBits.AttachFiles)) {
+      throw new Error(`Bot potrzebuje uprawnienia Załączanie plików na ${destination}.`);
+    }
     await interaction.deferReply({ ephemeral: true });
     await destination.send({
       embeds: [announcement],
+      files: [
+        new AttachmentBuilder(announcementVideoPath, {
+          name: "polonia-rp-ogloszenie.mp4",
+        }),
+      ],
       allowedMentions: { parse: [] },
     });
     if (roleToPing) {
