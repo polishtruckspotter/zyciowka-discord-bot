@@ -3077,7 +3077,11 @@ async function handleModal(interaction) {
       .setThumbnail(profile.imageUrl)
       .setFooter({ text: "Dowody osobiste × Polonia RP" });
 
-    await destination.send({ embeds: [card] });
+    await destination.send({
+      content: `<@${interaction.user.id}> Twój dowód osobisty został opublikowany.`,
+      embeds: [card],
+      allowedMentions: { parse: [], users: [interaction.user.id] },
+    });
     await interaction.editReply({ content: `Dowód osobisty został wysłany na kanał ${destination}.` });
     return;
   }
