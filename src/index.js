@@ -906,17 +906,20 @@ async function findUserRecordMessages(channel, userId, recordType) {
             field.name === name &&
             (field.value === `<@${userId}>` || field.value === `<@!${userId}>`),
         );
+      const mentionsUser =
+        message.content.includes(`<@${userId}>`) ||
+        message.content.includes(`<@!${userId}>`);
       const isMatch =
         recordType === "vehicle"
           ? embeds.some((embed) => embed.title === "Rejestracja pojazdu") &&
-            hasUserField("Właściciel")
+            (hasUserField("Właściciel") || mentionsUser)
           : recordType === "weapon-permit"
             ? embeds.some((embed) => embed.title === "Pozwolenie na broń") &&
-              hasUserField("Członek Discord")
+              (hasUserField("Członek Discord") || mentionsUser)
             : embeds.some(
                 (embed) =>
                   embed.title?.startsWith("Dowód osobisty -") &&
-                  hasUserField("Użytkownik Discord"),
+                  (hasUserField("Użytkownik Discord") || mentionsUser),
               );
 
       if (isMatch) matches.push(message);
@@ -941,11 +944,12 @@ async function handleCommand(interaction) {
   if (interaction.commandName === "znajdz") {
     const recordType = interaction.options.getSubcommand();
     const user = interaction.options.getUser("user", true);
-    const channelId = {
-      pojazd: vehicleRegistrationChannelId,
-      "pozwolenie-na-bron": weaponPermitPublicationChannelId,
-      dowod: idCardSearchChannelId,
-    }[recordType];
+    const channelId = recordType === "dowod"
+      ? webhookConfigs[interaction.guildId]?.idCardChannelId ?? idCardSearchChannelId
+      : {
+          pojazd: vehicleRegistrationChannelId,
+          "pozwolenie-na-bron": weaponPermitPublicationChannelId,
+        }[recordType];
     if (!channelId) {
       throw new Error("Nieznany rodzaj rekordu do wyszukania.");
     }
@@ -1604,6 +1608,7 @@ async function handleCommand(interaction) {
       return;
     }
 
+    await updateWebhookConfig(interaction.guildId, { idCardChannelId: destination.id });
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
       .setTitle("Dowody osobiste")
@@ -3078,6 +3083,7 @@ async function handleModal(interaction) {
       embeds: [card],
       allowedMentions: { parse: [], users: [interaction.user.id] },
     });
+    await updateWebhookConfig(interaction.guildId, { idCardChannelId: destination.id });
     await interaction.editReply({ content: `Dowód osobisty został wysłany na kanał ${destination}.` });
     return;
   }
