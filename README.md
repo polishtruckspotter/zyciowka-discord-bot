@@ -1,4 +1,4 @@
-# Polonia RP — bot Discord
+# Polonia RP | Bot
 
 Polskojęzyczny bot do weryfikacji członków i podstawowej moderacji serwera Discord. Weryfikacja polega na rozwiązaniu prostego działania matematycznego i nadaniu skonfigurowanej roli Discord. Nie sprawdza obecności gracza ani jego konta w Roblox/Emergency Hamburg.
 
@@ -42,7 +42,7 @@ Polskojęzyczny bot do weryfikacji członków i podstawowej moderacji serwera Di
 Bot jest procesem Discord Gateway, więc nie potrzebuje strony WWW ani otwartego portu.
 
 1. Utwórz serwer Node.js na Wispbyte i wybierz wersję Node.js 20 lub nowszą.
-2. Prześlij cały folder `bot` do `/home/container/bot`. Powinny się w nim znajdować `package.json`, `package-lock.json`, `.env.example` i `src/`. Nie przesyłaj `node_modules` ani lokalnego pliku `.env`.
+2. Prześlij pliki projektu bezpośrednio do `/home/container`. Powinny się tam znajdować `package.json`, `package-lock.json`, `.env.example`, `src/` i `data/`. Nie przesyłaj `node_modules` ani lokalnego pliku `.env`.
 3. W ustawieniach zmiennych środowiskowych serwera dodaj:
    - `DISCORD_TOKEN` — token bota.
    - `CLIENT_ID` — Application ID bota.
@@ -51,14 +51,14 @@ Bot jest procesem Discord Gateway, więc nie potrzebuje strony WWW ani otwartego
 4. Zainstaluj zależności jednorazowo z konsoli Wispbyte (nie ustawiaj tego jako Startup Command):
 
    ```sh
-   cd bot && npm install
+   cd /home/container && npm ci
    ```
 
-   Wispbyte uruchamia polecenia z `/home/container`, więc `bot/` wskazuje na `/home/container/bot`. Nie uruchamiaj `npm install` przy każdym restarcie, bo to wydłuża start.
+   Nie uruchamiaj `npm ci` przy każdym restarcie, bo to wydłuża start.
 5. W polu **Startup Command** Wispbyte ustaw komendę, która uruchamia bota:
 
    ```sh
-   cd /home/container/bot && npm start
+   cd /home/container && npm start
    ```
 
    Nie używaj tu samego `npm install`: po zainstalowaniu pakietów proces kończy się, a bot pozostaje offline. Skrypt `npm start` uruchamia `node src/index.js` i pozostawia proces bota działający.
