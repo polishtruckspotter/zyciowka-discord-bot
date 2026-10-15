@@ -121,23 +121,7 @@ async function handleWeaponPermitIdentityAnswer(message) {
   }
   weaponPermitIdentityRequestLocks.add(message.author.id);
   try {
-    const submittedIdentity = message.content.trim();
-    const username = submittedIdentity.startsWith("@")
-      ? submittedIdentity.slice(1)
-      : submittedIdentity;
-    const isUsername = /^[A-Za-z0-9_]{3,20}$/.test(username);
-    const isUserId = /^[1-9]\d{0,19}$/.test(submittedIdentity);
-    if (
-      (submittedIdentity.startsWith("@") && !isUsername) ||
-      (!isUserId && !isUsername) ||
-      (/^\d+$/.test(submittedIdentity) && !isUserId)
-    ) {
-      await message.reply("Wyślij nazwę Roblox (np. @NazwaGracza) albo prawidłowe numeryczne ID Roblox.");
-      return true;
-    }
-    const profile = isUserId
-      ? await getRobloxProfile(submittedIdentity)
-      : await getRobloxProfileByUsername(username);
+    const profile = await getRobloxProfileFromIdentity(message.content);
 
     const guild = await client.guilds.fetch(request.guildId);
     const permitChannel = await guild.channels.fetch(weaponPermitPublicationChannelId);
@@ -236,6 +220,26 @@ async function getRobloxProfileByUsername(username) {
   }
 
   return getRobloxProfile(String(user.id));
+}
+
+async function getRobloxProfileFromIdentity(identity) {
+  const submittedIdentity = identity.trim();
+  const username = submittedIdentity.startsWith("@")
+    ? submittedIdentity.slice(1)
+    : submittedIdentity;
+  const isUsername = /^[A-Za-z0-9_]{3,20}$/.test(username);
+  const isUserId = /^[1-9]\d{0,19}$/.test(submittedIdentity);
+  if (
+    (submittedIdentity.startsWith("@") && !isUsername) ||
+    (!isUserId && !isUsername) ||
+    (/^\d+$/.test(submittedIdentity) && !isUserId)
+  ) {
+    throw new Error("Podaj nazwę Roblox (np. @NazwaGracza) albo prawidłowe numeryczne ID Roblox.");
+  }
+
+  return isUserId
+    ? getRobloxProfile(submittedIdentity)
+    : getRobloxProfileByUsername(username);
 }
 
 function makeChallenge() {
@@ -2493,7 +2497,7 @@ async function handleButton(interaction) {
       ["age", "Wiek", TextInputStyle.Short, 1, 3],
       ["gender", "Płeć", TextInputStyle.Short, 1, 40],
       ["citizenship", "Obywatelstwo", TextInputStyle.Short, 2, 60],
-      ["roblox-id", "Roblox ID", TextInputStyle.Short, 1, 20],
+      ["roblox-id", "Roblox ID lub @nazwa", TextInputStyle.Short, 1, 21],
     ].map(([id, label, style, minLength, maxLength]) =>
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
@@ -2991,7 +2995,7 @@ async function handleModal(interaction) {
       return;
     }
 
-    const robloxId = interaction.fields.getTextInputValue("roblox-id").trim();
+    const robloxIdentity = interaction.fields.getTextInputValue("roblox-id").trim();
     const reason = interaction.fields.getTextInputValue("reason").trim();
     if (!/^\d{1,20}$/.test(robloxId) || /^0+$/.test(robloxId)) {
       await interaction.reply({
@@ -3052,27 +3056,21 @@ async function handleModal(interaction) {
       });
       return;
     }
-    if (!/^\d{1,20}$/.test(robloxId) || /^0+$/.test(robloxId)) {
-      await interaction.reply({
-        content: "Roblox ID musi być prawidłowym numerycznym ID konta. Kliknij przycisk, aby spróbować ponownie.",
-        ephemeral: true,
-      });
-      return;
-    }
-
     await interaction.deferReply({ ephemeral: true });
-    const profile = await getRobloxProfile(robloxId);
+    const profile = await getRobloxProfileFromIdentity(robloxIdentity);
+    const profileUrl = `https://www.roblox.com/users/${profile.id}/profile`;
     const card = new EmbedBuilder()
       .setColor(0x5865f2)
       .setTitle(`Dowód osobisty - ${profile.username}`)
+      .setURL(profileUrl)
       .addFields(
         { name: "Imię i nazwisko", value: fullName },
         { name: "Wiek", value: ageText },
         { name: "Płeć", value: gender },
         { name: "Obywatelstwo", value: citizenship },
         { name: "Użytkownik Discord", value: `<@${interaction.user.id}>` },
-        { name: "Konto Roblox", value: `@${profile.username}` },
-        { name: "ID Roblox", value: robloxId },
+        { name: "Konto Roblox", value: `[@${profile.username}](${profileUrl})` },
+        { name: "ID Roblox", value: `[${profile.id}](${profileUrl})` },
       )
       .setThumbnail(profile.imageUrl)
       .setFooter({ text: "Dowody osobiste × Polonia RP" });
