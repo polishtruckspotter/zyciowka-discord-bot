@@ -2176,11 +2176,6 @@ async function handleButton(interaction) {
     if (!permitRole) {
       throw new Error("Skonfigurowana rola pozwolenia na broń już nie istnieje.");
     }
-    const member = await interaction.guild.members.fetch(interaction.user.id);
-    if (member.roles.cache.has(permitRole.id)) {
-      await interaction.editReply("Masz już rolę pozwolenia na broń.");
-      return;
-    }
 
     const application = {
       user: interaction.user,
