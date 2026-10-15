@@ -1849,7 +1849,9 @@ async function handleButton(interaction) {
       await saveActivityCheckParticipants(participantsByMessage);
 
       const updatedEmbed = EmbedBuilder.from(checkEmbed).setFields(
-        ...checkEmbed.fields.filter((field) => field.name !== "Uczestnicy"),
+        ...checkEmbed.fields.filter(
+          (field) => field.name !== "Uczestnicy" && !field.name.startsWith("Uczestnicy ("),
+        ),
         {
           name: `Uczestnicy (${participants.length})`,
           value: formatActivityCheckParticipants(participants),
