@@ -44,6 +44,8 @@ const weaponPermitApplicationTimeoutMs = 15 * 60 * 1000;
 const roleChangeLogChannelId = "1555191573736591421";
 const plusRequestChannelId = "1555191866151145635";
 const weaponPermitPublicationChannelId = "1560304974716604537";
+const vehicleRegistrationChannelId = "1560308533852115056";
+const vehicleRegistrationInstructionsChannelId = "1560308627162800139";
 const praiseLogChannelIds = {
   skarga: "1556261784304746556",
   pochwala: "1556261886037860403",
@@ -823,6 +825,134 @@ async function getModerationTarget(interaction, user) {
 }
 
 async function handleCommand(interaction) {
+  if (interaction.commandName === "zarejestruj") {
+    const subcommand = interaction.options.getSubcommand();
+    const botMember = await interaction.guild.members.fetchMe();
+
+    if (subcommand === "instrukcja") {
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+        await interaction.reply({
+          content: "Tylko administrator serwera może opublikować instrukcję rejestracji pojazdu.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const instructionsChannel = await interaction.guild.channels.fetch(
+        vehicleRegistrationInstructionsChannelId,
+      );
+      if (!instructionsChannel || instructionsChannel.type !== ChannelType.GuildText) {
+        throw new Error(
+          `Kanał instrukcji ${vehicleRegistrationInstructionsChannelId} nie istnieje albo nie jest tekstowy.`,
+        );
+      }
+      const requiredPermissions =
+        PermissionFlagsBits.ViewChannel |
+        PermissionFlagsBits.SendMessages |
+        PermissionFlagsBits.EmbedLinks;
+      if (!botMember.permissionsIn(instructionsChannel).has(requiredPermissions)) {
+        throw new Error(
+          `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${instructionsChannel}.`,
+        );
+      }
+
+      const instructionsEmbed = new EmbedBuilder()
+        .setColor(0x3498db)
+        .setTitle("Jak zarejestrować pojazd?")
+        .setDescription(
+          [
+            "Użyj komendy `/zarejestruj pojazd` i uzupełnij wszystkie wymagane pola:",
+            "• **Marka** — marka pojazdu",
+            "• **Model** — model pojazdu",
+            "• **Kolor** — kolor pojazdu",
+            "• **Tablice** — numer rejestracyjny",
+            "• **Właściciel** — wybierz użytkownika Discord",
+            "• **Zdjęcie** — załącz zdjęcie pojazdu",
+            "",
+            "Bot opublikuje kartę pojazdu na kanale rejestracji i oznaczy wybranego właściciela.",
+          ].join("\n"),
+        )
+        .setFooter({ text: "Rejestracja pojazdów — Polonia RP" });
+      await instructionsChannel.send({
+        embeds: [instructionsEmbed],
+        allowedMentions: { parse: [] },
+      });
+      await interaction.reply({
+        content: `Instrukcję rejestracji pojazdu opublikowano na ${instructionsChannel}.`,
+        ephemeral: true,
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+
+    if (subcommand === "pojazd") {
+      const brand = interaction.options.getString("marka", true).trim();
+      const model = interaction.options.getString("model", true).trim();
+      const color = interaction.options.getString("kolor", true).trim();
+      const plates = interaction.options.getString("tablice", true).trim();
+      const owner = interaction.options.getUser("wlasciciel", true);
+      const image = interaction.options.getAttachment("zdjecie", true);
+
+      if (![brand, model, color, plates].every(Boolean)) {
+        await interaction.reply({
+          content: "Marka, model, kolor i tablice nie mogą być puste.",
+          ephemeral: true,
+        });
+        return;
+      }
+      if (!image.contentType?.startsWith("image/")) {
+        await interaction.reply({
+          content: "Załącznik musi być plikiem graficznym.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const registrationChannel = await interaction.guild.channels.fetch(
+        vehicleRegistrationChannelId,
+      );
+      if (!registrationChannel || registrationChannel.type !== ChannelType.GuildText) {
+        throw new Error(
+          `Kanał rejestracji pojazdów ${vehicleRegistrationChannelId} nie istnieje albo nie jest tekstowy.`,
+        );
+      }
+      const requiredPermissions =
+        PermissionFlagsBits.ViewChannel |
+        PermissionFlagsBits.SendMessages |
+        PermissionFlagsBits.EmbedLinks;
+      if (!botMember.permissionsIn(registrationChannel).has(requiredPermissions)) {
+        throw new Error(
+          `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${registrationChannel}.`,
+        );
+      }
+
+      const vehicleEmbed = new EmbedBuilder()
+        .setColor(0x2ecc71)
+        .setTitle("Rejestracja pojazdu")
+        .addFields(
+          { name: "Marka", value: brand, inline: true },
+          { name: "Model", value: model, inline: true },
+          { name: "Kolor", value: color, inline: true },
+          { name: "Tablice", value: plates, inline: true },
+          { name: "Właściciel", value: `<@${owner.id}>`, inline: true },
+          { name: "Zarejestrował(a)", value: `<@${interaction.user.id}>`, inline: true },
+        )
+        .setImage(image.url)
+        .setTimestamp();
+      await registrationChannel.send({
+        content: `<@${owner.id}> zarejestrowano Twój pojazd.`,
+        embeds: [vehicleEmbed],
+        allowedMentions: { parse: [], users: [owner.id] },
+      });
+      await interaction.reply({
+        content: `Pojazd został zarejestrowany i opublikowany na ${registrationChannel}.`,
+        ephemeral: true,
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+  }
+
   if (
     interaction.commandName === "bot" &&
     interaction.options.getSubcommand() === "kick"

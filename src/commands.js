@@ -67,9 +67,68 @@ const botKickCommand = new SlashCommandBuilder()
   )
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
 
+const vehicleRegistrationCommand = new SlashCommandBuilder()
+  .setName("zarejestruj")
+  .setDescription("Rejestruje pojazd na serwerze.")
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("pojazd")
+      .setDescription("Zarejestruj pojazd i opublikuj jego kartę.")
+      .addStringOption((option) =>
+        option
+          .setName("marka")
+          .setDescription("Marka pojazdu.")
+          .setMinLength(1)
+          .setMaxLength(100)
+          .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("model")
+          .setDescription("Model pojazdu.")
+          .setMinLength(1)
+          .setMaxLength(100)
+          .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("kolor")
+          .setDescription("Kolor pojazdu.")
+          .setMinLength(1)
+          .setMaxLength(100)
+          .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("tablice")
+          .setDescription("Numer tablic rejestracyjnych.")
+          .setMinLength(1)
+          .setMaxLength(30)
+          .setRequired(true),
+      )
+      .addUserOption((option) =>
+        option
+          .setName("wlasciciel")
+          .setDescription("Właściciel pojazdu na Discordzie.")
+          .setRequired(true),
+      )
+      .addAttachmentOption((option) =>
+        option
+          .setName("zdjecie")
+          .setDescription("Zdjęcie rejestrowanego pojazdu.")
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("instrukcja")
+      .setDescription("Publikuje instrukcję rejestracji pojazdu."),
+  );
+
 const commands = [
   activityCheckCommand,
   botKickCommand,
+  vehicleRegistrationCommand,
   new SlashCommandBuilder()
     .setName("setup-weryfikacja")
     .setDescription("Konfiguruje panel weryfikacji, role oraz kanał.")
