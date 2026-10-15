@@ -3047,7 +3047,7 @@ async function handleModal(interaction) {
     const ageText = interaction.fields.getTextInputValue("age").trim();
     const gender = interaction.fields.getTextInputValue("gender").trim();
     const citizenship = interaction.fields.getTextInputValue("citizenship").trim();
-    const robloxId = interaction.fields.getTextInputValue("roblox-id").trim();
+    const robloxIdentity = interaction.fields.getTextInputValue("roblox-id").trim();
     const age = Number(ageText);
     if (!/^\d+$/.test(ageText) || !Number.isInteger(age) || age < 1 || age > 120) {
       await interaction.reply({
