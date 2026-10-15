@@ -47,6 +47,7 @@ const plusRequestChannelId = "1555191866151145635";
 const weaponPermitPublicationChannelId = "1560304974716604537";
 const vehicleRegistrationChannelId = "1560308533852115056";
 const vehicleRegistrationInstructionsChannelId = "1560308627162800139";
+const idCardSearchChannelId = "1560330309382316144";
 const praiseLogChannelIds = {
   skarga: "1556261784304746556",
   pochwala: "1556261886037860403",
@@ -872,7 +873,115 @@ async function getModerationTarget(interaction, user) {
   return target;
 }
 
+async function findUserRecordMessages(channel, userId, recordType) {
+  const maxScannedMessages = 5000;
+  const maxResults = 10;
+  const matches = [];
+  let scanned = 0;
+  let before;
+
+  while (scanned < maxScannedMessages && matches.length < maxResults) {
+    const messages = await channel.messages.fetch({
+      limit: Math.min(100, maxScannedMessages - scanned),
+      ...(before ? { before } : {}),
+    });
+    if (messages.size === 0) {
+      return { matches, scanned, reachedScanLimit: false };
+    }
+
+    for (const message of messages.values()) {
+      if (message.author.id !== client.user.id) continue;
+      const embeds = message.embeds;
+      const fields = embeds.flatMap((embed) => embed.fields);
+      const hasUserField = (name) =>
+        fields.some(
+          (field) =>
+            field.name === name &&
+            (field.value === `<@${userId}>` || field.value === `<@!${userId}>`),
+        );
+      const isMatch =
+        recordType === "vehicle"
+          ? embeds.some((embed) => embed.title === "Rejestracja pojazdu") &&
+            hasUserField("Właściciel")
+          : recordType === "weapon-permit"
+            ? embeds.some((embed) => embed.title === "Pozwolenie na broń") &&
+              hasUserField("Członek Discord")
+            : embeds.some(
+                (embed) =>
+                  embed.title?.startsWith("Dowód osobisty -") &&
+                  hasUserField("Użytkownik Discord"),
+              );
+
+      if (isMatch) matches.push(message);
+      if (matches.length >= maxResults) break;
+    }
+
+    scanned += messages.size;
+    before = messages.last()?.id;
+    if (!before || messages.size < 100) {
+      return { matches, scanned, reachedScanLimit: false };
+    }
+  }
+
+  return {
+    matches,
+    scanned,
+    reachedScanLimit: scanned >= maxScannedMessages,
+  };
+}
+
 async function handleCommand(interaction) {
+  if (interaction.commandName === "znajdz") {
+    const recordType = interaction.options.getSubcommand();
+    const user = interaction.options.getUser("user", true);
+    const channelId = {
+      pojazd: vehicleRegistrationChannelId,
+      "pozwolenie-na-bron": weaponPermitPublicationChannelId,
+      dowod: idCardSearchChannelId,
+    }[recordType];
+    if (!channelId) {
+      throw new Error("Nieznany rodzaj rekordu do wyszukania.");
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+    const channel = await interaction.guild.channels.fetch(channelId);
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      throw new Error(`Kanał do wyszukiwania rekordu (${channelId}) nie istnieje albo nie jest tekstowy.`);
+    }
+
+    const { matches, scanned, reachedScanLimit } = await findUserRecordMessages(
+      channel,
+      user.id,
+      recordType === "pojazd"
+        ? "vehicle"
+        : recordType === "dowod"
+          ? "id-card"
+          : "weapon-permit",
+    );
+    if (matches.length === 0) {
+      await interaction.editReply(
+        {
+          content: reachedScanLimit
+            ? `Nie znaleziono rekordu dla ${user} w ostatnich ${scanned} wiadomościach na ${channel}. Starsze wpisy nie zostały przeszukane.`
+            : `Nie znaleziono rekordu dla ${user} na ${channel}.`,
+          allowedMentions: { parse: [] },
+        },
+      );
+      return;
+    }
+
+    await interaction.editReply({
+      content: [
+        `Znaleziono ${matches.length} rekordów dla ${user} na ${channel}:`,
+        ...matches.map((message) => `• [${message.createdAt.toLocaleString("pl-PL")}](${message.url})`),
+        "Pokazano maksymalnie 10 najnowszych wyników.",
+        ...(reachedScanLimit ? [`Przeszukano ostatnie ${scanned} wiadomości; starsze wpisy nie zostały sprawdzone.`] : []),
+      ].join("\n"),
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
   if (interaction.commandName === "zarejestruj") {
     const subcommand = interaction.options.getSubcommand();
     const botMember = await interaction.guild.members.fetchMe();
@@ -2961,6 +3070,7 @@ async function handleModal(interaction) {
         { name: "Wiek", value: ageText },
         { name: "Płeć", value: gender },
         { name: "Obywatelstwo", value: citizenship },
+        { name: "Użytkownik Discord", value: `<@${interaction.user.id}>` },
         { name: "Konto Roblox", value: `@${profile.username}` },
         { name: "ID Roblox", value: robloxId },
       )

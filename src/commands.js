@@ -125,10 +125,48 @@ const vehicleRegistrationCommand = new SlashCommandBuilder()
       .setDescription("Publikuje instrukcję rejestracji pojazdu."),
   );
 
+const findRecordCommand = new SlashCommandBuilder()
+  .setName("znajdz")
+  .setDescription("Wyszukuje rekord użytkownika.")
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("pojazd")
+      .setDescription("Znajdź zarejestrowane pojazdy użytkownika.")
+      .addUserOption((option) =>
+        option
+          .setName("user")
+          .setDescription("Użytkownik Discord.")
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("pozwolenie-na-bron")
+      .setDescription("Znajdź pozwolenie na broń użytkownika.")
+      .addUserOption((option) =>
+        option
+          .setName("user")
+          .setDescription("Użytkownik Discord.")
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("dowod")
+      .setDescription("Znajdź dowód osobisty użytkownika.")
+      .addUserOption((option) =>
+        option
+          .setName("user")
+          .setDescription("Użytkownik Discord.")
+          .setRequired(true),
+      ),
+  );
+
 const commands = [
   activityCheckCommand,
   botKickCommand,
   vehicleRegistrationCommand,
+  findRecordCommand,
   new SlashCommandBuilder()
     .setName("setup-weryfikacja")
     .setDescription("Konfiguruje panel weryfikacji, role oraz kanał.")
