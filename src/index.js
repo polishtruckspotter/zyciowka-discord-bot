@@ -57,7 +57,7 @@ const weaponPermitQuestions = [
   { key: "Nick Discord", prompt: "💬 Nick Discord:" },
   {
     key: "Rodzaj broni",
-    prompt: "🔫 Jaki rodzaj broni wybierasz? Odpowiedz: Krótka albo Długa.",
+    prompt: "🔫 Jaki rodzaj broni wybierasz? Odpowiedz: Krótka, Długa albo 2 (2 oznacza oba rodzaje).",
   },
   {
     key: "Sytuacje użycia broni",
@@ -504,21 +504,24 @@ async function handleWeaponPermitAnswer(message) {
   }
 
   const currentQuestion = weaponPermitQuestions[application.answers.length];
+  const normalizedAnswer = answer.toLocaleLowerCase("pl");
   application.answers.push(
     currentQuestion.key === "Rodzaj broni"
-      ? answer.toLocaleLowerCase("pl").startsWith("k")
-        ? "Krótka"
-        : answer.toLocaleLowerCase("pl").startsWith("d")
-          ? "Długa"
-          : answer
+      ? normalizedAnswer === "2"
+        ? "Oba rodzaje (krótka i długa)"
+        : ["krótka", "krotka"].includes(normalizedAnswer)
+          ? "Krótka"
+          : ["długa", "dluga"].includes(normalizedAnswer)
+            ? "Długa"
+            : answer
       : answer,
   );
   if (
     currentQuestion.key === "Rodzaj broni" &&
-    !["krótka", "krotka", "długa", "dluga"].includes(answer.toLocaleLowerCase("pl"))
+    !["krótka", "krotka", "długa", "dluga", "2"].includes(normalizedAnswer)
   ) {
     application.answers.pop();
-    await message.reply("Wybierz rodzaj broni, wpisując „Krótka” albo „Długa”.");
+    await message.reply("Wpisz „Krótka”, „Długa” albo „2” (2 oznacza oba rodzaje).");
     application.processing = false;
     return;
   }
