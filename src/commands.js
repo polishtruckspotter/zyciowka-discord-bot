@@ -168,6 +168,14 @@ const commands = [
   vehicleRegistrationCommand,
   findRecordCommand,
   new SlashCommandBuilder()
+    .setName("informacja")
+    .setDescription("Wyświetla informacje o dostępnych funkcjach bota.")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("ekonomia")
+        .setDescription("Pokazuje komendy i zasady ekonomii serwerowej."),
+    ),
+  new SlashCommandBuilder()
     .setName("setup-weryfikacja")
     .setDescription("Konfiguruje panel weryfikacji, role oraz kanał.")
     .addChannelOption((option) =>

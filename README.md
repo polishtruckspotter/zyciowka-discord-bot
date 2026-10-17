@@ -22,7 +22,7 @@ Polskojęzyczny bot do weryfikacji członków i podstawowej moderacji serwera Di
    - `GUILD_ID` — ID serwera. Jeśli jest ustawione, komendy zarejestrują się tylko na tym serwerze (zalecane podczas konfiguracji).
    - `MOD_LOG_CHANNEL_ID` — opcjonalne ID kanału logów moderacji.
 
-3. W Discord Developer Portal → Bot → Privileged Gateway Intents włącz **Message Content Intent**. Bot potrzebuje go, aby odczytywać treść logów wysyłanych przez webhook gry. Włącz również **Server Members Intent** (`Guild Members`), aby wykrywać dołączających członków i wyrzucać boty. Bot korzysta też z intents `Guilds` i `Guild Messages`.
+3. W Discord Developer Portal → Bot → Privileged Gateway Intents włącz **Message Content Intent**. Bot potrzebuje go, aby odczytywać treść logów wysyłanych przez webhook gry i obsługiwać komendy ekonomii z prefiksem `!`. Włącz również **Server Members Intent** (`Guild Members`), aby wykrywać dołączających członków i wyrzucać boty. Bot korzysta też z intents `Guilds` i `Guild Messages`.
 
 4. Zaproś bota na serwer ze scope'ami `bot` i `applications.commands`. Przyznaj mu co najmniej:
    - View Channels, Send Messages i Embed Links,
@@ -68,8 +68,10 @@ Dodaj `DISCORD_TOKEN` i `CLIENT_ID` w ustawieniach zmiennych środowiskowych Wis
 
 ## Komendy
 
-- `data/` zawiera puste pliki JSON na przyszłą konfigurację, modmail, logi, ostrzeżenia, tickety i tymczasowe bany.
+- `data/` zawiera pliki konfiguracji bota, w tym zapisywane przez bota salda ekonomii w `data/economy.json`.
 - `api/` zawiera placeholdery o nazwach z przykładowej struktury. To nie są jeszcze działające endpointy i nie są używane przez bota.
+- Komendy ekonomii używają prefiksu `!` i działają osobno na każdym serwerze. `!bal [@osoba]` pokazuje saldo portfela i banku; `!work` daje losowo 100–1 000 zł raz na godzinę; `!daily` daje 1 000–2 500 zł raz na 24 godziny; `!rob @osoba` próbuje ukraść losową kwotę (przy 35% szansy złapania tracisz losową kwotę, a próby są ograniczone do jednej na 5 minut); `!50/50 <kwota>` przyjmuje stawkę do 3 000 zł i daje 50% szansy na taki sam zysk; `!deposit <kwota>`, `!withdraw <kwota>` i `!pay @osoba <kwota>` zarządzają pieniędzmi; `!leaderboard` pokazuje 20 najbogatszych, licząc portfel i bank. `!help` wyświetla listę komend. Salda są zapisywane w `data/economy.json`.
+- `/informacja ekonomia` wyświetla w formie embedu pełną listę komend ekonomii, cooldowny, zasady banku, przelewów i ryzyka.
 - `/aktywnosc check setup kanal-panelu kanal-checku rola-do-pingowania rola-uprawniona [rola-uprawniona-2 ... rola-uprawniona-22]` — publikuje panel w formie embedu. Osoba z jedną z wybranych ról może kliknąć przycisk, wypełnić formularz z celem (liczba 0–100000) i opisem, a bot opublikuje check jako embed na wskazanym kanale i pingnie wybraną konkretną rolę (rola `@everyone` nie jest dozwolona). Pod checkiem członkowie mogą zapisać się przyciskiem „Zapisz mnie”; lista uczestników i jej licznik aktualizują się na embedzie, a ponowne kliknięcie wycofuje zapis. Uczestnicy są zapisywani w `data/activity-check-participants.json`. Wymaga uprawnienia Zarządzanie serwerem; konfiguracja jest zapisywana w `data/eh-webhook-config.json`.
 - `/bot kick kanal` — konfiguruje kanał do zgłaszania zhakowanych kont i publikuje na nim polski embed. Każda wiadomość od użytkownika na skonfigurowanym kanale powoduje automatyczne wyrzucenie autora oraz usunięcie wszystkich wiadomości z tego kanału z ostatnich 5 minut. Wymaga uprawnienia Zarządzanie serwerem; bot musi mieć uprawnienia Wyrzucanie członków, Zarządzanie wiadomościami, Wysyłanie wiadomości i Osadzanie linków.
 - `/zarejestruj pojazd marka model kolor tablice wlasciciel zdjecie` — publikuje kartę pojazdu ze zdjęciem na kanale `1560308533852115056` i pingnie wskazanego właściciela Discord. Administrator może użyć `/zarejestruj instrukcja`, aby opublikować polską instrukcję na kanale `1560308627162800139`.

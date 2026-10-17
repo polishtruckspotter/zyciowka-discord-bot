@@ -102,9 +102,15 @@ const activityCheckParticipantsPath = path.join(
   "data",
   "activity-check-participants.json",
 );
+const economyDataPath = path.join(__dirname, "..", "data", "economy.json");
+const workCooldownMs = 60 * 60 * 1000;
+const dailyCooldownMs = 24 * 60 * 60 * 1000;
+const robberyCooldownMs = 5 * 60 * 1000;
 let activityCheckUpdateQueue = Promise.resolve();
+let economyUpdateQueue = Promise.resolve();
 let weaponPermitIdentityRequests = {};
 let webhookConfigs = {};
+let economyData = {};
 
 function getMissingConfiguration(keys) {
   return keys.filter((key) => !process .env[key]);
@@ -259,6 +265,265 @@ function makeChallenge() {
 
 function challengeKey(guildId, userId) {
   return `${guildId}:${userId}`;
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function createEconomyAccount() {
+  return { wallet: 0, bank: 0, lastDailyAt: 0, lastWorkAt: 0, lastRobAt: 0 };
+}
+
+function normalizeEconomyData(value) {
+  if (!isRecord(value)) {
+    throw new Error("Plik ekonomii musi zawierać obiekt JSON.");
+  }
+
+  const normalized = {};
+  for (const [guildId, users] of Object.entries(value)) {
+    if (!isRecord(users)) {
+      throw new Error(`Nieprawidłowe dane ekonomii serwera ${guildId}.`);
+    }
+    normalized[guildId] = {};
+    for (const [userId, account] of Object.entries(users)) {
+      if (
+        !isRecord(account) ||
+        !["wallet", "bank", "lastDailyAt", "lastWorkAt", "lastRobAt"].every(
+          (key) => account[key] === undefined || (Number.isSafeInteger(account[key]) && account[key] >= 0),
+        ) ||
+        !Number.isSafeInteger(account.wallet) ||
+        !Number.isSafeInteger(account.bank)
+      ) {
+        throw new Error(`Nieprawidłowe dane ekonomii użytkownika ${userId} na serwerze ${guildId}.`);
+      }
+      normalized[guildId][userId] = { ...createEconomyAccount(), ...account };
+    }
+  }
+  return normalized;
+}
+
+async function loadEconomyData() {
+  try {
+    economyData = normalizeEconomyData(JSON.parse(await fs.readFile(economyDataPath, "utf8")));
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      economyData = {};
+      return;
+    }
+    throw error;
+  }
+}
+
+async function updateEconomy(update) {
+  const pendingUpdate = economyUpdateQueue.catch(() => {}).then(async () => {
+    const next = structuredClone(economyData);
+    const result = await update(next);
+    await fs.mkdir(path.dirname(economyDataPath), { recursive: true });
+    const temporaryPath = `${economyDataPath}.${process.pid}.tmp`;
+    await fs.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    await fs.rename(temporaryPath, economyDataPath);
+    economyData = next;
+    return result;
+  });
+  economyUpdateQueue = pendingUpdate;
+  return pendingUpdate;
+}
+
+function getEconomyAccount(data, guildId, userId) {
+  data[guildId] ??= {};
+  data[guildId][userId] ??= createEconomyAccount();
+  return data[guildId][userId];
+}
+
+function formatZloty(amount) {
+  return `${new Intl.NumberFormat("pl-PL").format(amount)} zł`;
+}
+
+function randomInteger(minimum, maximum) {
+  return Math.floor(Math.random() * (maximum - minimum + 1)) + minimum;
+}
+
+function formatCooldown(remainingMs) {
+  const minutes = Math.ceil(remainingMs / 60000);
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return hours ? `${hours} godz. ${remainingMinutes} min.` : `${remainingMinutes} min.`;
+}
+
+function parseEconomyAmount(value) {
+  if (!/^\d+$/.test(value ?? "")) return null;
+  const amount = Number(value);
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
+}
+
+async function handleEconomyCommand(message) {
+  if (!message.guild || message.author.bot) return false;
+  const args = message.content.trim().split(/\s+/);
+  const command = args[0].toLowerCase();
+  const user = message.mentions.users.first();
+  const send = (content) => message.reply({ content, allowedMentions: { parse: [] } });
+
+  if (command === "!help" || command === "!economy") {
+    await send([
+      "**Komendy ekonomii**",
+      "`!bal [@osoba]` — sprawdź portfel i bank.",
+      "`!work` — zarób 100–1 000 zł raz na godzinę.",
+      "`!daily` — odbierz 1 000–2 500 zł raz na 24 godziny.",
+      "`!rob @osoba` — spróbuj ukraść losową kwotę; możesz zostać złapany.",
+      "`!50/50 <kwota>` — obstaw do 3 000 zł; wygrana daje taki sam zysk.",
+      "`!deposit <kwota>` / `!withdraw <kwota>` — przelew między portfelem i bankiem.",
+      "`!pay @osoba <kwota>` — przelej pieniądze.",
+      "`!leaderboard` — ranking 20 najbogatszych osób na serwerze.",
+    ].join("\n"));
+    return true;
+  }
+
+  if (command === "!bal" || command === "!balance") {
+    const target = user ?? message.author;
+    const targetAccount = economyData[message.guild.id]?.[target.id] ?? createEconomyAccount();
+    await send(
+      `💰 Saldo ${target}: portfel **${formatZloty(targetAccount.wallet)}** · bank **${formatZloty(targetAccount.bank)}** · razem **${formatZloty(targetAccount.wallet + targetAccount.bank)}**.`,
+    );
+    return true;
+  }
+
+  if (command === "!leaderboard") {
+    const leaderboard = Object.entries(economyData[message.guild.id] ?? {})
+      .map(([userId, entry]) => ({ userId, total: entry.wallet + entry.bank }))
+      .filter((entry) => entry.total > 0)
+      .sort((left, right) => right.total - left.total || left.userId.localeCompare(right.userId))
+      .slice(0, 20);
+    await send(
+      leaderboard.length
+        ? `🏆 **Najbogatsi na serwerze**\n${leaderboard.map((entry, index) => `${index + 1}. <@${entry.userId}> — **${formatZloty(entry.total)}**`).join("\n")}`
+        : "Ranking jest pusty. Zarób pierwsze pieniądze komendą `!work`.",
+    );
+    return true;
+  }
+
+  if (command === "!work" || command === "!daily") {
+    const isDaily = command === "!daily";
+    const cooldown = isDaily ? dailyCooldownMs : workCooldownMs;
+    const timestampKey = isDaily ? "lastDailyAt" : "lastWorkAt";
+    const result = await updateEconomy((data) => {
+      const currentAccount = getEconomyAccount(data, message.guild.id, message.author.id);
+      const remaining = currentAccount[timestampKey] + cooldown - Date.now();
+      if (currentAccount[timestampKey] && remaining > 0) return { remaining };
+      const amount = isDaily ? randomInteger(1000, 2500) : randomInteger(100, 1000);
+      currentAccount.wallet += amount;
+      currentAccount[timestampKey] = Date.now();
+      return { amount, wallet: currentAccount.wallet };
+    });
+    await send(
+      result.remaining
+        ? `Musisz poczekać jeszcze **${formatCooldown(result.remaining)}**, zanim znów użyjesz tej komendy.`
+        : `✅ ${isDaily ? "Odbierasz dzienną nagrodę" : "Pracujesz i zarabiasz"} **${formatZloty(result.amount)}**! Saldo portfela: **${formatZloty(result.wallet)}**.`,
+    );
+    return true;
+  }
+
+  if (command === "!deposit" || command === "!withdraw") {
+    const amount = parseEconomyAmount(args[1]);
+    if (!amount) {
+      await send(`Podaj prawidłową kwotę, np. \`${command} 500\`.`);
+      return true;
+    }
+    const depositing = command === "!deposit";
+    const result = await updateEconomy((data) => {
+      const currentAccount = getEconomyAccount(data, message.guild.id, message.author.id);
+      const source = depositing ? "wallet" : "bank";
+      const destination = depositing ? "bank" : "wallet";
+      if (currentAccount[source] < amount) return false;
+      currentAccount[source] -= amount;
+      currentAccount[destination] += amount;
+      return true;
+    });
+    await send(
+      result
+        ? `${depositing ? "Wpłacono" : "Wypłacono"} **${formatZloty(amount)}** ${depositing ? "do banku" : "z banku"}.`
+        : `Nie masz wystarczających środków ${depositing ? "w portfelu" : "w banku"}.`,
+    );
+    return true;
+  }
+
+  if (command === "!pay") {
+    const amount = parseEconomyAmount(args[2]);
+    if (!user || user.bot || user.id === message.author.id || !amount) {
+      await send("Użycie: `!pay @osoba <kwota>`. Nie możesz płacić sobie ani botom.");
+      return true;
+    }
+    const result = await updateEconomy((data) => {
+      const payer = getEconomyAccount(data, message.guild.id, message.author.id);
+      if (payer.wallet < amount) return false;
+      payer.wallet -= amount;
+      getEconomyAccount(data, message.guild.id, user.id).wallet += amount;
+      return true;
+    });
+    await send(
+      result
+        ? `Przelano ${user} **${formatZloty(amount)}**.`
+        : "Nie masz wystarczających środków w portfelu.",
+    );
+    return true;
+  }
+
+  if (command === "!50/50") {
+    const amount = parseEconomyAmount(args[1]);
+    if (!amount || amount > 3000) {
+      await send("Podaj stawkę od 1 do 3 000 zł, np. `!50/50 500`. Maksymalny zysk z wygranej to 3 000 zł.");
+      return true;
+    }
+    const won = Math.random() < 0.5;
+    const result = await updateEconomy((data) => {
+      const currentAccount = getEconomyAccount(data, message.guild.id, message.author.id);
+      if (currentAccount.wallet < amount) return false;
+      currentAccount.wallet += won ? amount : -amount;
+      return { wallet: currentAccount.wallet };
+    });
+    await send(
+      result
+        ? `${won ? "🎉 Wygrywasz" : "😢 Przegrywasz"} **${formatZloty(amount)}**! Saldo portfela: **${formatZloty(result.wallet)}**.`
+        : "Nie masz wystarczających środków w portfelu na tę stawkę.",
+    );
+    return true;
+  }
+
+  if (command === "!rob") {
+    if (!user || user.bot || user.id === message.author.id) {
+      await send("Użycie: `!rob @osoba`. Nie możesz okraść siebie ani bota.");
+      return true;
+    }
+    const result = await updateEconomy((data) => {
+      const robber = getEconomyAccount(data, message.guild.id, message.author.id);
+      const victim = getEconomyAccount(data, message.guild.id, user.id);
+      const remaining = robber.lastRobAt + robberyCooldownMs - Date.now();
+      if (robber.lastRobAt && remaining > 0) return { remaining };
+      robber.lastRobAt = Date.now();
+      if (victim.wallet < 1) return { empty: true };
+      if (Math.random() < 0.35) {
+        const fine = Math.min(robber.wallet, randomInteger(100, 500));
+        robber.wallet -= fine;
+        return { caught: true, fine };
+      }
+      const amount = randomInteger(1, Math.min(500, victim.wallet));
+      victim.wallet -= amount;
+      robber.wallet += amount;
+      return { amount };
+    });
+    await send(
+      result.remaining
+        ? `Musisz odczekać **${formatCooldown(result.remaining)}** przed kolejną próbą napadu.`
+        : result.empty
+          ? `${user} nie ma pieniędzy w portfelu.`
+          : result.caught
+            ? `🚨 Złapano Cię! Tracisz **${formatZloty(result.fine)}**.`
+            : `💸 Udało się! Ukradłeś ${user} **${formatZloty(result.amount)}**.`,
+    );
+    return true;
+  }
+
+  return false;
 }
 
 async function loadWebhookConfigs() {
@@ -941,6 +1206,51 @@ async function findUserRecordMessages(channel, userId, recordType) {
 }
 
 async function handleCommand(interaction) {
+  if (interaction.commandName === "informacja") {
+    if (interaction.options.getSubcommand() === "ekonomia") {
+      const embed = new EmbedBuilder()
+        .setColor(0x2ecc71)
+        .setTitle("💰 Ekonomia serwerowa")
+        .setDescription(
+          "Zarabiaj, oszczędzaj, przelewaj lub ryzykuj swoje złote. Saldo i cooldowny są oddzielne dla każdego serwera.",
+        )
+        .addFields(
+          {
+            name: "Saldo i zarabianie",
+            value: [
+              "`!bal [@osoba]` — sprawdza portfel, bank i łączne saldo.",
+              "`!work` — zarabiasz losowo **100–1 000 zł**, raz na godzinę.",
+              "`!daily` — odbierasz **1 000–2 500 zł**, raz na 24 godziny.",
+              "`!leaderboard` — pokazuje 20 najbogatszych osób na serwerze.",
+            ].join("\n"),
+          },
+          {
+            name: "Bank i przelewy",
+            value: [
+              "`!deposit <kwota>` — wpłata z portfela do banku.",
+              "`!withdraw <kwota>` — wypłata z banku do portfela.",
+              "`!pay @osoba <kwota>` — przelew z portfela do innej osoby.",
+            ].join("\n"),
+          },
+          {
+            name: "Ryzyko",
+            value: [
+              "`!50/50 <kwota>` — stawka do **3 000 zł**; połowa szans na wygraną i taki sam zysk albo utratę stawki.",
+              "`!rob @osoba` — próba kradzieży do **500 zł** z jej portfela. Jest **35% szans**, że zostaniesz złapany i stracisz do 500 zł z własnego portfela. Jedna próba co 5 minut.",
+            ].join("\n"),
+          },
+          {
+            name: "Ważne",
+            value:
+              "Kwoty w grach i przelewach muszą znajdować się w Twoim portfelu. `!help` pokazuje skróconą listę komend; użyj komend z prefiksem `!` na kanale serwera.",
+          },
+        )
+        .setFooter({ text: "Saldo jest zapisywane automatycznie." });
+      await interaction.reply({ embeds: [embed] });
+    }
+    return;
+  }
+
   if (interaction.commandName === "znajdz") {
     const recordType = interaction.options.getSubcommand();
     const user = interaction.options.getUser("user", true);
@@ -3213,6 +3523,11 @@ client.on("messageCreate", (message) => {
     }
     return;
   }
+  handleEconomyCommand(message).catch((error) => {
+    console.error("Nie udało się obsłużyć komendy ekonomii:", error);
+    message.reply(`Nie udało się wykonać komendy ekonomii: ${error.message}`)
+      .catch((replyError) => console.error("Nie udało się poinformować o błędzie ekonomii:", replyError));
+  });
   handleBotKickChannelMessage(message).catch((error) => {
     console.error("Nie udało się obsłużyć wiadomości na kanale automatycznego wyrzucania:", error);
   });
@@ -3301,7 +3616,7 @@ if (missing.length) {
   console.error(`Brak wymaganych zmiennych środowiskowych: ${missing.join(", ")}. Skopiuj .env.example do .env i uzupełnij wartości.`);
   process.exitCode = 1;
 } else {
-  Promise.all([loadWebhookConfigs(), loadWeaponPermitIdentityRequests()])
+  Promise.all([loadWebhookConfigs(), loadWeaponPermitIdentityRequests(), loadEconomyData()])
     .then(() => client.login(process.env.DISCORD_TOKEN))
     .catch((error) => {
       console.error("Nie udało się uruchomić bota lub wczytać konfiguracji:", error);
