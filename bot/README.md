@@ -1,0 +1,108 @@
+# Polonia RP | Bot
+
+Polskojęzyczny bot do weryfikacji członków i podstawowej moderacji serwera Discord. Weryfikacja polega na rozwiązaniu prostego działania matematycznego i nadaniu skonfigurowanej roli Discord. Nie sprawdza obecności gracza ani jego konta w Roblox/Emergency Hamburg.
+
+## Wymagania
+
+- Node.js 20 lub nowszy
+- Aplikacja bota utworzona w [Discord Developer Portal](https://discord.com/developers/applications)
+- Bot zaproszony na serwer z uprawnieniami do używanych komend i nadawania roli
+
+## Konfiguracja
+
+1. Zainstaluj zależności:
+
+   ```sh
+   npm install
+   ```
+
+2. Skopiuj `.env.example` jako `.env` i uzupełnij:
+   - `DISCORD_TOKEN` — token bota; nie udostępniaj go nikomu.
+   - `CLIENT_ID` — Application ID aplikacji Discord.
+   - `GUILD_ID` — ID serwera. Jeśli jest ustawione, komendy zarejestrują się tylko na tym serwerze (zalecane podczas konfiguracji).
+   - `MOD_LOG_CHANNEL_ID` — opcjonalne ID kanału logów moderacji.
+
+3. W Discord Developer Portal → Bot → Privileged Gateway Intents włącz **Message Content Intent**. Bot potrzebuje go, aby odczytywać treść logów wysyłanych przez webhook gry i obsługiwać komendy ekonomii z prefiksem `!`. Włącz również **Server Members Intent** (`Guild Members`), aby wykrywać dołączających członków i wyrzucać boty. Bot korzysta też z intents `Guilds` i `Guild Messages`.
+
+4. Zaproś bota na serwer ze scope'ami `bot` i `applications.commands`. Przyznaj mu co najmniej:
+   - View Channels, Send Messages i Embed Links,
+   - Manage Roles (oraz ustaw najwyższą rolę bota wyżej niż obie role wybrane w `/setup-weryfikacja`),
+   - Moderate Members, Kick Members, Ban Members i Manage Messages dla funkcji moderacji. Uprawnienie Kick Members jest wymagane także do automatycznego wyrzucania botów.
+
+5. Uruchom bota:
+
+   ```sh
+   npm start
+   ```
+
+   Bot automatycznie rejestruje komendy po zalogowaniu. Jeśli ustawiono `GUILD_ID`, komendy są rejestrowane na tym serwerze; bez niego są rejestrowane globalnie.
+
+## Wdrożenie na Wispbyte
+
+Bot jest procesem Discord Gateway, więc nie potrzebuje strony WWW ani otwartego portu.
+
+1. Utwórz serwer Node.js na Wispbyte i wybierz wersję Node.js 20 lub nowszą.
+2. Prześlij pliki projektu bezpośrednio do `/home/container`. Powinny się tam znajdować `package.json`, `package-lock.json`, `.env.example`, `src/` i `data/`. Nie przesyłaj `node_modules` ani lokalnego pliku `.env`.
+3. W ustawieniach zmiennych środowiskowych serwera dodaj:
+   - `DISCORD_TOKEN` — token bota.
+   - `CLIENT_ID` — Application ID bota.
+   - `GUILD_ID` — opcjonalny ID serwera Discord; zalecany, żeby komendy pojawiły się szybciej podczas konfiguracji.
+   - `MOD_LOG_CHANNEL_ID` — opcjonalny ID kanału logów moderacji.
+4. Zainstaluj zależności jednorazowo z konsoli Wispbyte (nie ustawiaj tego jako Startup Command):
+
+   ```sh
+   cd /home/container && npm ci
+   ```
+
+   Nie uruchamiaj `npm ci` przy każdym restarcie, bo to wydłuża start.
+5. W polu **Startup Command** Wispbyte ustaw komendę, która uruchamia bota:
+
+   ```sh
+   cd /home/container && npm start
+   ```
+
+   Nie używaj tu samego `npm install`: po zainstalowaniu pakietów proces kończy się, a bot pozostaje offline. Skrypt `npm start` uruchamia `node src/index.js` i pozostawia proces bota działający.
+6. Komendy slash są rejestrowane automatycznie przy starcie bota. Ustaw `GUILD_ID`, aby rejestrować je na jednym serwerze i szybciej zobaczyć zmiany.
+
+Dodaj `DISCORD_TOKEN` i `CLIENT_ID` w ustawieniach zmiennych środowiskowych Wispbyte. Jeśli bot nie może się zalogować, sprawdź logi konsoli oraz czy te zmienne są ustawione bez dodatkowych cudzysłowów lub spacji. Nie publikuj tokena ani nie umieszczaj go w plikach przesyłanych publicznie.
+
+## Komendy
+
+- `data/` zawiera pliki konfiguracji bota, w tym zapisywane przez bota salda ekonomii w `data/economy.json`.
+- `api/` zawiera placeholdery o nazwach z przykładowej struktury. To nie są jeszcze działające endpointy i nie są używane przez bota.
+- Komendy ekonomii używają prefiksu `!` i działają osobno na każdym serwerze. `!bal [@osoba]` pokazuje saldo portfela i banku; `!work` daje losowo 100–1 000 zł raz na godzinę; `!daily` daje 1 000–2 500 zł raz na 24 godziny; `!rob @osoba` próbuje ukraść losową kwotę (przy 35% szansy złapania tracisz losową kwotę, a próby są ograniczone do jednej na 5 minut); `!50/50 <kwota>` przyjmuje stawkę do 3 000 zł i daje 50% szansy na taki sam zysk; `!deposit <kwota>`, `!withdraw <kwota>` i `!pay @osoba <kwota>` zarządzają pieniędzmi; `!leaderboard` pokazuje 20 najbogatszych, licząc portfel i bank. `!help` wyświetla listę komend. Salda są zapisywane w `data/economy.json`.
+- `/informacja ekonomia` wyświetla w formie embedu pełną listę komend ekonomii, cooldowny, zasady banku, przelewów i ryzyka.
+- `/aktywnosc check setup kanal-panelu kanal-checku rola-do-pingowania rola-uprawniona [rola-uprawniona-2 ... rola-uprawniona-22]` — publikuje panel w formie embedu. Osoba z jedną z wybranych ról może kliknąć przycisk, wypełnić formularz z celem (liczba 0–100000) i opisem, a bot opublikuje check jako embed na wskazanym kanale i pingnie wybraną konkretną rolę (rola `@everyone` nie jest dozwolona). Pod checkiem członkowie mogą zapisać się przyciskiem „Zapisz mnie”; lista uczestników i jej licznik aktualizują się na embedzie, a ponowne kliknięcie wycofuje zapis. Uczestnicy są zapisywani w `data/activity-check-participants.json`. Wymaga uprawnienia Zarządzanie serwerem; konfiguracja jest zapisywana w `data/eh-webhook-config.json`.
+- `/bot kick kanal` — konfiguruje kanał do zgłaszania zhakowanych kont i publikuje na nim polski embed. Każda wiadomość od użytkownika na skonfigurowanym kanale powoduje automatyczne wyrzucenie autora oraz usunięcie wszystkich wiadomości z tego kanału z ostatnich 5 minut. Wymaga uprawnienia Zarządzanie serwerem; bot musi mieć uprawnienia Wyrzucanie członków, Zarządzanie wiadomościami, Wysyłanie wiadomości i Osadzanie linków.
+- `/zarejestruj pojazd marka model kolor tablice wlasciciel zdjecie` — publikuje kartę pojazdu ze zdjęciem na kanale `1560308533852115056` i pingnie wskazanego właściciela Discord. Administrator może użyć `/zarejestruj instrukcja`, aby opublikować polską instrukcję na kanale `1560308627162800139`.
+- `/znajdz pojazd user`, `/znajdz pozwolenie-na-bron user` i `/znajdz dowod user` — wyszukują i prywatnie zwracają odnośniki do maksymalnie 10 najnowszych rekordów wybranego użytkownika. Dowody są wyszukiwane na kanale ustawionym w `/setup-dowody` (lub na kanale `1560330309382316144`, jeśli konfiguracja nie została jeszcze zapisana). Ponownie uruchom `/setup-dowody` po wdrożeniu aktualizacji, aby bot zapamiętał wybrany kanał. Dowody utworzone wcześniej można znaleźć, jeśli ich embed zawiera właściciela Discord albo wiadomość bota go pingowała.
+- `/setup-weryfikacja kanal rola-do-nadania rola-do-nadania-2 rola-do-zabrania` — publikuje panel w wybranym kanale. Po poprawnej odpowiedzi matematycznej bot nada dwie wybrane role i zabierze wskazaną rolę. Wymaga uprawnienia Zarządzanie serwerem.
+- `/setup-dowody kanal-dowodow` — publikuje w bieżącym kanale panel do wyrobienia dowodu. Po kliknięciu użytkownik wypełnia formularz z imieniem i nazwiskiem, wiekiem, płcią, obywatelstwem oraz Roblox ID lub nazwą Roblox (`@nazwa`). Bot pobiera profil i awatar z publicznego Roblox API, a gotowy dowód z linkiem do profilu wysyła na wybrany kanał. Wymaga uprawnienia Zarządzanie serwerem.
+- `/setup-logi-bany-kicki kanal-zrodlowy kanal-ban-kick` — wybiera kanał, na którym webhook gry publikuje logi, oraz kanał docelowy dla banów i wyrzuceń. Bot przekazuje wykryte bany jako edytowalne karty, a wyrzucenia jako logi.
+- `/setup-logi-inne kanal-inne` — wybiera kanał docelowy dla pozostałych webhooków i publikuje panel ręcznego zgłaszania użycia admin car lub fly.
+- `/setup-ogloszenia kanal-ogloszen [rola-do-pingowania]` — publikuje panel tworzenia ogłoszeń. Moderator z uprawnieniem Zarządzanie serwerem może wpisać tytuł i treść, a bot opublikuje ogłoszenie z animowanym GIF-em `zyciowka-rp.gif` wyświetlanym w embedzie na wybranym kanale. Opcjonalna rola otrzyma ghost ping; bot musi mieć uprawnienia Załączanie plików, Zarządzanie wiadomościami oraz możliwość wspominania tej roli.
+- `/setup-pozwolenie-na-bron kanal-panelu kanal-wnioskow rola-po-akceptacji` — publikuje panel wniosków, z którego można składać kolejne wnioski nawet po otrzymaniu roli pozwolenia; jednocześnie można mieć tylko jeden niedokończony wniosek. Bot wysyła pytania po kolei w DM, a komplet odpowiedzi zapisuje w embedzie na kanale wniosków. W pytaniu o rodzaj broni odpowiedź `2` oznacza oba rodzaje: krótką i długą. Personel z uprawnieniem Zarządzanie serwerem, Moderowanie członków, Wyrzucanie członków lub Banowanie członków może zaakceptować albo odrzucić wniosek; akceptacja nadaje skonfigurowaną rolę i prosi zaakceptowaną osobę w DM o nazwę Roblox (`@nazwa`) lub numeryczne ID. Bot wyszukuje konto przez Roblox API, a na pozwoleniu publikuje odnośnik do `https://www.roblox.com/users/<ID>/profile` wraz z nazwą i awatarem. Po otrzymaniu odpowiedzi bot pingnie zaakceptowaną osobę i publikuje pozwolenie na broń na kanale `1560304974716604537`. Oczekujące prośby są zapisywane w `data/weapon-permit-identity-requests.json`. Wnioski wygasają po 15 minutach, jeśli nie zostaną ukończone; użytkownik może anulować je, wpisując `anuluj`.
+- `/setup-ping-poczekalnia kanal-glosowy rola-do-pingowania kanal-pingow` — po wejściu członka do wskazanego kanału głosowego bot pingnie wybraną rolę i członka na wybranym kanale tekstowym. Wymaga uprawnienia Zarządzanie serwerem.
+- `/plusminus` — nadaje albo zabiera rolę i wysyła embed na stały kanał logów `1555191573736591421`.
+- `/plusa wniosek ile dlaczego osoby-potwierdzajace [dowod]` — składa wniosek o plusa; osoba składająca jest uzupełniana automatycznie, dowód jest opcjonalny, a embed trafia na kanał `1555191866151145635`.
+- `/pochwala-skarga` — osoby z uprawnieniem Zarządzanie wiadomościami na serwerze mogą użyć komendy na dowolnym kanale; skargi trafiają na `1556261784304746556`, a pochwały na `1556261886037860403`, zależnie od wybranego typu wpisu.
+- `/urlop kanal-wnioskow` — otwiera polski formularz z wymaganym czasem trwania i powodem oraz opcjonalnymi informacjami. Wniosek trafia na wybrany kanał z przyciskami zaakceptowania urlopu, zakończenia zaakceptowanego urlopu albo zakończenia go z podanym powodem. Przyciski obsługuje personel z uprawnieniem Zarządzanie serwerem, Moderowanie członków, Wyrzucanie członków lub Banowanie członków.
+- `/ostrzez` — ostrzega użytkownika; bot próbuje wysłać mu wiadomość prywatną. Wymaga uprawnienia Moderowanie członków.
+- `/timeout` — nakłada timeout od 1 minuty do 28 dni. Wymaga uprawnienia Moderowanie członków.
+- `/mute` — wycisza użytkownika przez Discord timeout na 1 minutę do 28 dni; wymaga powodu i czasu trwania. Wymaga uprawnienia Moderowanie członków.
+- Automatyczne wyrzucanie botów — bot wyrzuca każde nowe konto bota zaraz po dołączeniu. Obejmuje to także legalne integracje; boty obecne na serwerze przed uruchomieniem tej funkcji nie są wyrzucane.
+- `/kick` — wyrzuca użytkownika; wymaga podania powodu. Wymaga uprawnienia Wyrzucanie członków.
+- `/ban` — banuje użytkownika; wymaga podania powodu i opcjonalnie usuwa jego wiadomości z ostatnich 0–168 godzin. Wymaga uprawnienia Banowanie członków.
+- `/wyczysc` — usuwa od 1 do 100 wiadomości młodszych niż 14 dni w bieżącym kanale. Wymaga uprawnienia Zarządzanie wiadomościami.
+
+Komendy moderacyjne odrzucają działania na właścicielu serwera oraz osobach o równych lub wyższych rolach. Bot musi też mieć odpowiednio wysoką rolę. Logi trafiają do `MOD_LOG_CHANNEL_ID`, jeśli zmienna została ustawiona; bez niej akcje są zapisywane w konsoli.
+
+Formularz dowodu publikuje podane dane osobowe, Roblox ID/nazwę oraz link do profilu jako wiadomość na wybranym kanale. Ustaw kanał z ograniczonym dostępem, jeśli dowody mają być widoczne tylko dla administracji.
+
+Aby uruchomić automatyczne logi, skonfiguruj gamepass tak, aby jego Discord webhook wysyłał wiadomości na wybrany kanał źródłowy, a następnie uruchom `/setup-logi-bany-kicki` i `/setup-logi-inne`. Bot obserwuje tylko wiadomości webhooków w wybranym kanale źródłowym; bany i wyrzucenia trafiają na kanał ban/kick, pozostałe webhooki — na kanał inne. Ustaw dedykowany kanał źródłowy, aby obce webhooki nie były kopiowane. Bot nie może wykryć informacji, których gamepass nie umieszcza w wiadomości. Wpis bana można poprawić przyciskiem przez moderatorów z uprawnieniem Zarządzanie serwerem, Moderowanie członków, Wyrzucanie członków lub Banowanie członków. Konfiguracja kanałów jest zapisywana w `data/eh-webhook-config.json`; zachowaj katalog `data` na Wispbyte podczas aktualizacji/restartów. Nigdy nie wklejaj webhook URL ani tokena do publicznego kanału lub kodu.
+
+## Sprawdzenie składni
+
+```sh
+npm run check
+```
