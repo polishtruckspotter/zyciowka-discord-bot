@@ -42,15 +42,15 @@ const weaponPermitDecisionLocks = new Set();
 const weaponPermitIdentityRequestLocks = new Set();
 const botKickChannelQueues = new Map();
 const weaponPermitApplicationTimeoutMs = 15 * 60 * 1000;
-const roleChangeLogChannelId = "1555191573736591421";
-const plusRequestChannelId = "1555191866151145635";
-const weaponPermitPublicationChannelId = "1560304974716604537";
-const vehicleRegistrationChannelId = "1560308533852115056";
-const vehicleRegistrationInstructionsChannelId = "1560308627162800139";
-const idCardSearchChannelId = "1560330309382316144";
+const roleChangeLogChannelId = "1561435547946197108";
+const plusRequestChannelId = "1561440698589511760";
+const weaponPermitPublicationChannelId = "1561435546876907696";
+const vehicleRegistrationChannelId = "1561435546876907693";
+const vehicleRegistrationInstructionsChannelId = "1561440076213387354";
+const idCardSearchChannelId = "1561435546876907694";
 const praiseLogChannelIds = {
-  skarga: "1556261784304746556",
-  pochwala: "1556261886037860403",
+  skarga: "1561435546624991333",
+  pochwala: "1561435546365067374",
 };
 const weaponPermitQuestions = [
   { key: "Nick Roblox", prompt: "🎮 Nick Roblox:" },
@@ -3559,14 +3559,29 @@ async function handleModal(interaction) {
 client.once("ready", async () => {
   console.info(`Zalogowano jako ${client.user.tag}.`);
   const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
-  const route = process.env.GUILD_ID
-    ? Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID)
-    : Routes.applicationCommands(process.env.CLIENT_ID);
 
   try {
+    let route;
+    if (process.env.GUILD_ID) {
+      if (!/^\d{17,20}$/.test(process.env.GUILD_ID)) {
+        throw new Error("GUILD_ID musi być prawidłowym numerycznym ID serwera Discord.");
+      }
+      try {
+        await client.guilds.fetch(process.env.GUILD_ID);
+      } catch (error) {
+        throw new Error(
+          `Bot nie jest członkiem serwera ${process.env.GUILD_ID} albo nie może go pobrać. Zaproś bota na ten serwer przez link OAuth2 z uprawnieniami bot i applications.commands.`,
+          { cause: error },
+        );
+      }
+      route = Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID);
+    } else {
+      route = Routes.applicationCommands(process.env.CLIENT_ID);
+    }
+
     await rest.put(route, { body: commands });
     console.info(
-      `Zarejestrowano ${commands.length} komend slash${process.env.GUILD_ID ? " na serwerze" : " globalnie"}.`,
+      `Zarejestrowano ${commands.length} komend slash${process.env.GUILD_ID ? ` na serwerze ${process.env.GUILD_ID}` : " globalnie"}.`,
     );
   } catch (error) {
     console.error("Nie udało się automatycznie zarejestrować komend Discord:", error);
