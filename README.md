@@ -85,7 +85,7 @@ Dodaj `DISCORD_TOKEN` i `CLIENT_ID` w ustawieniach zmiennych środowiskowych Wis
 - `/setup-ping-poczekalnia kanal-glosowy rola-do-pingowania kanal-pingow` — po wejściu członka do wskazanego kanału głosowego bot pingnie wybraną rolę i członka na wybranym kanale tekstowym. Wymaga uprawnienia Zarządzanie serwerem.
 - `/plusminus` — nadaje albo zabiera rolę i wysyła embed na stały kanał logów `1555191573736591421`.
 - `/plusa wniosek ile dlaczego osoby-potwierdzajace [dowod]` — składa wniosek o plusa; osoba składająca jest uzupełniana automatycznie, dowód jest opcjonalny, a embed trafia na kanał `1555191866151145635`.
-- `/pochwala-skarga` — osoby z co najmniej jednym z uprawnień Zarządzanie serwerem, Moderowanie członków, Wyrzucanie członków lub Banowanie członków mogą użyć komendy na dowolnym kanale; skargi trafiają na `1556261784304746556`, a pochwały na `1556261886037860403`, zależnie od wybranego typu wpisu.
+- `/pochwala-skarga` — każdy członek serwera może użyć komendy na dowolnym kanale bez dodatkowych uprawnień; skargi trafiają na `1556261784304746556`, a pochwały na `1556261886037860403`, zależnie od wybranego typu wpisu.
 - `/urlop kanal-wnioskow` — otwiera polski formularz z wymaganym czasem trwania i powodem oraz opcjonalnymi informacjami. Wniosek trafia na wybrany kanał z przyciskami zaakceptowania urlopu, zakończenia zaakceptowanego urlopu albo zakończenia go z podanym powodem. Przyciski obsługuje personel z uprawnieniem Zarządzanie serwerem, Moderowanie członków, Wyrzucanie członków lub Banowanie członków.
 - `/ostrzez` — ostrzega użytkownika; bot próbuje wysłać mu wiadomość prywatną. Wymaga uprawnienia Moderowanie członków.
 - `/timeout` — nakłada timeout od 1 minuty do 28 dni. Wymaga uprawnienia Moderowanie członków.

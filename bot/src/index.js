@@ -2032,14 +2032,6 @@ async function handleCommand(interaction) {
   }
 
   if (interaction.commandName === "pochwala-skarga") {
-    if (!canSubmitModerationLog(interaction)) {
-      await interaction.reply({
-        content: "Do użycia tej komendy potrzebujesz jednego z uprawnień: Zarządzanie serwerem, Moderowanie członków, Wyrzucanie członków albo Banowanie członków.",
-        ephemeral: true,
-      });
-      return;
-    }
-
     const user = interaction.options.getUser("uzytkownik", true);
     const type = interaction.options.getString("typ", true);
     const reason = interaction.options.getString("powod", true).trim();
