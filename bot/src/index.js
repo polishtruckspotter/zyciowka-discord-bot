@@ -106,6 +106,7 @@ const economyDataPath = path.join(__dirname, "..", "data", "economy.json");
 const workCooldownMs = 60 * 60 * 1000;
 const dailyCooldownMs = 24 * 60 * 60 * 1000;
 const robberyCooldownMs = 5 * 60 * 1000;
+const maxGamblingBet = 3000;
 let activityCheckUpdateQueue = Promise.resolve();
 let economyUpdateQueue = Promise.resolve();
 let weaponPermitIdentityRequests = {};
@@ -357,21 +358,69 @@ function parseEconomyAmount(value) {
   return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
 }
 
+function createEconomyEmbed(description) {
+  return new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle("💰 Ekonomia serwerowa")
+    .setDescription(description)
+    .setFooter({ text: "Polonia RP • Saldo jest zapisywane automatycznie." })
+    .setTimestamp();
+}
+
 async function handleEconomyCommand(message) {
   if (!message.guild || message.author.bot) return false;
   const args = message.content.trim().split(/\s+/);
   const command = args[0].toLowerCase();
   const user = message.mentions.users.first();
-  const send = (content) => message.reply({ content, allowedMentions: { parse: [] } });
+  const send = (description) =>
+    message.reply({ embeds: [createEconomyEmbed(description)], allowedMentions: { parse: [] } });
+
+  if (command === "!economy" && ["add", "remove"].includes(args[1]?.toLowerCase())) {
+    if (!message.member?.permissions.has(PermissionFlagsBits.ManageGuild)) {
+      await send("Do zmieniania sald potrzebujesz uprawnienia **Zarządzanie serwerem**.");
+      return true;
+    }
+    const action = args[1].toLowerCase();
+    const amount = parseEconomyAmount(args[3]);
+    if (!user || user.bot || !amount || args.length !== 4) {
+      await send(`Użycie: \`!economy ${action} @osoba <kwota>\`, np. \`!economy ${action} @osoba 500\`.`);
+      return true;
+    }
+    const result = await updateEconomy((data) => {
+      const account = getEconomyAccount(data, message.guild.id, user.id);
+      if (action === "add") {
+        const total = account.wallet + account.bank;
+        if (!Number.isSafeInteger(total) || amount > Number.MAX_SAFE_INTEGER - total) return "overflow";
+        account.wallet += amount;
+        return "updated";
+      }
+      const walletAmount = Math.min(account.wallet, amount);
+      const bankAmount = amount - walletAmount;
+      if (account.bank < bankAmount) return "insufficient";
+      account.wallet -= walletAmount;
+      account.bank -= bankAmount;
+      return "updated";
+    });
+    await send(
+      result === "overflow"
+        ? "Nie można dodać tej kwoty — saldo przekroczyłoby bezpieczny limit."
+        : result === "insufficient"
+          ? `${user} nie ma wystarczającego łącznego salda, aby odjąć **${formatZloty(amount)}**.`
+          : `${action === "add" ? "Dodano" : "Odjęto"} **${formatZloty(amount)}** ${action === "add" ? "do" : "od"} salda ${user}.`,
+    );
+    return true;
+  }
 
   if (command === "!help" || command === "!economy") {
     await send([
       "**Komendy ekonomii**",
       "`!bal [@osoba]` — sprawdź portfel i bank.",
+      "`!economy add @osoba <kwota>` / `!economy remove @osoba <kwota>` — zarządzaj saldem (Zarządzanie serwerem).",
       "`!work` — zarób 100–1 000 zł raz na godzinę.",
       "`!daily` — odbierz 1 000–2 500 zł raz na 24 godziny.",
       "`!rob @osoba` — spróbuj ukraść losową kwotę; możesz zostać złapany.",
       "`!50/50 <kwota>` — obstaw do 3 000 zł; wygrana daje taki sam zysk.",
+      "`!slots <kwota>` — zagraj na automacie; para podwaja stawkę, a trzy takie same symbole dają 5× stawki.",
       "`!deposit <kwota>` / `!withdraw <kwota>` — przelew między portfelem i bankiem.",
       "`!pay @osoba <kwota>` — przelej pieniądze.",
       "`!leaderboard` — ranking 20 najbogatszych osób na serwerze.",
@@ -470,7 +519,7 @@ async function handleEconomyCommand(message) {
 
   if (command === "!50/50") {
     const amount = parseEconomyAmount(args[1]);
-    if (!amount || amount > 3000) {
+    if (!amount || amount > maxGamblingBet) {
       await send("Podaj stawkę od 1 do 3 000 zł, np. `!50/50 500`. Maksymalny zysk z wygranej to 3 000 zł.");
       return true;
     }
@@ -485,6 +534,34 @@ async function handleEconomyCommand(message) {
       result
         ? `${won ? "🎉 Wygrywasz" : "😢 Przegrywasz"} **${formatZloty(amount)}**! Saldo portfela: **${formatZloty(result.wallet)}**.`
         : "Nie masz wystarczających środków w portfelu na tę stawkę.",
+    );
+    return true;
+  }
+
+  if (command === "!slots") {
+    const amount = parseEconomyAmount(args[1]);
+    if (!amount || amount > maxGamblingBet) {
+      await send("Podaj stawkę od 1 do 3 000 zł, np. `!slots 500`.");
+      return true;
+    }
+    const symbols = ["🍒", "🍋", "🍇", "⭐", "🔔", "🍀"];
+    const roll = Array.from({ length: 3 }, () => symbols[randomInteger(0, symbols.length - 1)]);
+    const triple = roll[0] === roll[1] && roll[1] === roll[2];
+    const pair = triple || new Set(roll).size < roll.length;
+    const payout = triple ? amount * 5 : pair ? amount * 2 : 0;
+    const result = await updateEconomy((data) => {
+      const account = getEconomyAccount(data, message.guild.id, message.author.id);
+      if (account.wallet < amount) return "insufficient";
+      if (!Number.isSafeInteger(account.wallet - amount + payout)) return "overflow";
+      account.wallet += payout - amount;
+      return { wallet: account.wallet };
+    });
+    await send(
+      result === "insufficient"
+        ? "Nie masz wystarczających środków w portfelu na tę stawkę."
+        : result === "overflow"
+          ? "Ta wygrana przekroczyłaby bezpieczny limit salda. Spróbuj ponownie."
+          : `${roll.join("  ")}\n${payout ? `Wygrywasz **${formatZloty(payout)}**!` : "Tym razem bez wygranej."} Saldo portfela: **${formatZloty(result.wallet)}**.`,
     );
     return true;
   }
@@ -1222,6 +1299,7 @@ async function handleCommand(interaction) {
               "`!work` — zarabiasz losowo **100–1 000 zł**, raz na godzinę.",
               "`!daily` — odbierasz **1 000–2 500 zł**, raz na 24 godziny.",
               "`!leaderboard` — pokazuje 20 najbogatszych osób na serwerze.",
+              "`!economy add @osoba <kwota>` / `!economy remove @osoba <kwota>` — zmienia saldo; wymaga uprawnienia Zarządzanie serwerem.",
             ].join("\n"),
           },
           {
@@ -1236,6 +1314,7 @@ async function handleCommand(interaction) {
             name: "Ryzyko",
             value: [
               "`!50/50 <kwota>` — stawka do **3 000 zł**; połowa szans na wygraną i taki sam zysk albo utratę stawki.",
+              "`!slots <kwota>` — stawka do **3 000 zł**; para wypłaca 2× stawki, a trzy takie same symbole 5×.",
               "`!rob @osoba` — próba kradzieży do **500 zł** z jej portfela. Jest **35% szans**, że zostaniesz złapany i stracisz do 500 zł z własnego portfela. Jedna próba co 5 minut.",
             ].join("\n"),
           },
@@ -1953,10 +2032,9 @@ async function handleCommand(interaction) {
   }
 
   if (interaction.commandName === "pochwala-skarga") {
-    const member = await interaction.guild.members.fetch(interaction.user.id);
-    if (!member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+    if (!canSubmitModerationLog(interaction)) {
       await interaction.reply({
-        content: "Do użycia tej komendy potrzebujesz uprawnienia Zarządzanie wiadomościami na serwerze.",
+        content: "Do użycia tej komendy potrzebujesz jednego z uprawnień: Zarządzanie serwerem, Moderowanie członków, Wyrzucanie członków albo Banowanie członków.",
         ephemeral: true,
       });
       return;
@@ -3525,7 +3603,10 @@ client.on("messageCreate", (message) => {
   }
   handleEconomyCommand(message).catch((error) => {
     console.error("Nie udało się obsłużyć komendy ekonomii:", error);
-    message.reply(`Nie udało się wykonać komendy ekonomii: ${error.message}`)
+    message.reply({
+      embeds: [createEconomyEmbed(`Nie udało się wykonać komendy ekonomii: ${error.message}`)],
+      allowedMentions: { parse: [] },
+    })
       .catch((replyError) => console.error("Nie udało się poinformować o błędzie ekonomii:", replyError));
   });
   handleBotKickChannelMessage(message).catch((error) => {
