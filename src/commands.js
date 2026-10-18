@@ -125,6 +125,54 @@ const vehicleRegistrationCommand = new SlashCommandBuilder()
       .setDescription("Publikuje instrukcję rejestracji pojazdu."),
   );
 
+const setupCommand = new SlashCommandBuilder()
+  .setName("setup")
+  .setDescription("Konfiguruje panele zgłoszeń i rekrutacji.")
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("tickets")
+      .setDescription("Publikuje panel pięciu kategorii ticketów.")
+      .addChannelOption((option) =>
+        option.setName("kanal-panelu").setDescription("Kanał, na którym opublikować panel.").addChannelTypes(ChannelType.GuildText).setRequired(true),
+      )
+      .addChannelOption((option) =>
+        option.setName("kategoria-pytania").setDescription("Kategoria kanałów dla pytań ogólnych.").addChannelTypes(ChannelType.GuildCategory).setRequired(true),
+      )
+      .addChannelOption((option) =>
+        option.setName("kategoria-eh").setDescription("Kategoria kanałów dla zgłoszeń Emergency Hamburg.").addChannelTypes(ChannelType.GuildCategory).setRequired(true),
+      )
+      .addChannelOption((option) =>
+        option.setName("kategoria-discord").setDescription("Kategoria kanałów dla zgłoszeń Discord.").addChannelTypes(ChannelType.GuildCategory).setRequired(true),
+      )
+      .addChannelOption((option) =>
+        option.setName("kategoria-techniczna").setDescription("Kategoria kanałów dla pomocy technicznej.").addChannelTypes(ChannelType.GuildCategory).setRequired(true),
+      )
+      .addChannelOption((option) =>
+        option.setName("kategoria-odwolania").setDescription("Kategoria kanałów dla odwołań od bana.").addChannelTypes(ChannelType.GuildCategory).setRequired(true),
+      )
+      .addRoleOption((option) =>
+        option.setName("rola-personelu").setDescription("Rola, która może widzieć i obsługiwać tickety.").setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("rekru")
+      .setDescription("Publikuje panel podań rekrutacyjnych wysyłanych przez DM.")
+      .addChannelOption((option) =>
+        option.setName("kanal-panelu").setDescription("Kanał, na którym opublikować panel rekrutacji.").addChannelTypes(ChannelType.GuildText).setRequired(true),
+      )
+      .addChannelOption((option) =>
+        option.setName("kanal-podan").setDescription("Prywatny kanał, na który bot wyśle gotowe podania.").addChannelTypes(ChannelType.GuildText).setRequired(true),
+      )
+      .addRoleOption((option) =>
+        option.setName("rola-rekrutacji").setDescription("Rola pingowana przy nowym podaniu; musi widzieć kanał podań.").setRequired(true),
+      )
+      .addRoleOption((option) =>
+        option.setName("rola-po-akceptacji").setDescription("Rola nadawana kandydatowi po zaakceptowaniu podania.").setRequired(true),
+      ),
+  )
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
+
 const findRecordCommand = new SlashCommandBuilder()
   .setName("znajdz")
   .setDescription("Wyszukuje rekord użytkownika.")
@@ -163,6 +211,7 @@ const findRecordCommand = new SlashCommandBuilder()
   );
 
 const commands = [
+  setupCommand,
   activityCheckCommand,
   botKickCommand,
   vehicleRegistrationCommand,

@@ -17,6 +17,7 @@ const {
   PermissionFlagsBits,
   REST,
   Routes,
+  StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } = require("discord.js");
@@ -37,6 +38,34 @@ const verificationChallenges = new Map();
 const challengeLifetimeMs = 5 * 60 * 1000;
 const waitingRoomPingCooldownMs = 30 * 1000;
 const waitingRoomPingCooldowns = new Map();
+const recruitmentApplications = new Map();
+const recruitmentDecisionLocks = new Set();
+const ticketCategories = [
+  { key: "general", title: "Pytanie / Pomoc Ogólna", description: "Ogólne pytania dotyczące rozgrywki, zasad serwera oraz wątpliwości.", emoji: "❓", option: "kategoria-pytania" },
+  { key: "eh", title: "Zgłoszenie EH", description: "Zgłoszenia dotyczące pojazdów, mechanik oraz wydarzeń w grze.", emoji: "🚔", option: "kategoria-eh" },
+  { key: "discord", title: "Zgłoszenie Discord", description: "Zgłoszenie złamania regulaminu Discord lub problemów z użytkownikami.", emoji: "💬", option: "kategoria-discord" },
+  { key: "technical", title: "Pomoc Techniczna", description: "Problemy techniczne, brak rangi, błędy dostępu lub inne usterki.", emoji: "🆘", option: "kategoria-techniczna" },
+  { key: "ban-appeal", title: "Odwołanie od Bana", description: "Wniosek o unban lub apelacja od nałożonej kary.", emoji: "⚖️", option: "kategoria-odwolania" },
+];
+const recruitmentQuestions = [
+  { section: "INFORMACJE O KANDYDACIE", question: "Imię / nick w grze: podaj imię lub nick z Roblox / Discord." },
+  { section: "INFORMACJE O KANDYDACIE", question: "Ile masz lat?" },
+  { section: "INFORMACJE O KANDYDACIE", question: "Ile czasu tygodniowo możesz poświęcić na tę funkcję i w jakich godzinach jesteś zwykle dostępny?" },
+  { section: "INFORMACJE O KANDYDACIE", question: "Dlaczego chcesz zostać administratorem lub moderatorem właśnie na naszym serwerze?" },
+  { section: "INFORMACJE O KANDYDACIE", question: "Czy masz doświadczenie w moderacji lub administracji? Opisz je albo napisz, że dopiero zaczynasz." },
+  { section: "POJĘCIA ROLEPLAY", question: "Wyjaśnij FRP / FailRP." },
+  { section: "POJĘCIA ROLEPLAY", question: "Wyjaśnij VDM." },
+  { section: "POJĘCIA ROLEPLAY", question: "Wyjaśnij RDM." },
+  { section: "POJĘCIA ROLEPLAY", question: "Wyjaśnij MG (metagaming)." },
+  { section: "POJĘCIA ROLEPLAY", question: "Wyjaśnij PG (powergaming)." },
+  { section: "POJĘCIA ROLEPLAY", question: "Wyjaśnij CL (combat logging)." },
+  { section: "POJĘCIA ROLEPLAY", question: "Czym różnią się IC i OOC?" },
+  { section: "POJĘCIA ROLEPLAY", question: "Wyjaśnij RK (revenge killing)." },
+  { section: "POJĘCIA ROLEPLAY", question: "Wyjaśnij FearRP." },
+  { section: "SCENARIUSZE", question: "Co zrobisz, gdy zauważysz gracza ewidentnie łamiącego regulamin, np. taranującego innych lub strzelającego bez powodu?" },
+  { section: "SCENARIUSZE", question: "Gracz kłóci się z Tobą i twierdzi, że niesłusznie nałożyłeś karę. Jak rozwiążesz konflikt?" },
+  { section: "SCENARIUSZE", question: "Twój znajomy łamie regulamin na Twoich oczach. Jak reagujesz?" },
+];
 const weaponPermitApplications = new Map();
 const weaponPermitDecisionLocks = new Set();
 const weaponPermitIdentityRequestLocks = new Set();
@@ -1283,7 +1312,105 @@ async function findUserRecordMessages(channel, userId, recordType) {
   };
 }
 
+async function handleSetupCommand(interaction) {
+  const subcommand = interaction.options.getSubcommand(true);
+  if (subcommand === "tickets") {
+    const panelChannel = interaction.options.getChannel("kanal-panelu", true);
+    const supportRole = interaction.options.getRole("rola-personelu", true);
+    const categories = Object.fromEntries(
+      ticketCategories.map((category) => [
+        category.key,
+        interaction.options.getChannel(category.option, true),
+      ]),
+    );
+    const categoryIds = Object.values(categories).map((category) => category.id);
+    if (new Set(categoryIds).size !== ticketCategories.length) {
+      await interaction.reply({ content: "Wybierz pięć różnych kategorii kanałów dla ticketów.", ephemeral: true });
+      return;
+    }
+    if (supportRole.id === interaction.guildId || supportRole.managed) {
+      await interaction.reply({ content: "Wybierz zwykłą, niezarządzaną rolę personelu.", ephemeral: true });
+      return;
+    }
+
+    const botMember = await interaction.guild.members.fetchMe();
+    if (!botMember.permissions.has(PermissionFlagsBits.ManageChannels)) {
+      await interaction.reply({ content: "Bot potrzebuje uprawnienia Zarządzanie kanałami, aby tworzyć prywatne tickety.", ephemeral: true });
+      return;
+    }
+    const panelPermissions = botMember.permissionsIn(panelChannel);
+    if (!panelPermissions.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks])) {
+      await interaction.reply({ content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${panelChannel}.`, ephemeral: true });
+      return;
+    }
+
+    const config = {
+      panelChannelId: panelChannel.id,
+      supportRoleId: supportRole.id,
+      categories: Object.fromEntries(Object.entries(categories).map(([key, channel]) => [key, channel.id])),
+    };
+    await updateWebhookConfig(interaction.guildId, { ticketsConfig: config });
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle("Centrum zgłoszeń")
+      .setDescription("Wybierz kategorię z listy, aby utworzyć prywatny kanał zgłoszenia. Zobaczysz go Ty oraz personel.")
+      .addFields(ticketCategories.map(({ title, description, emoji }) => ({ name: `${emoji} ${title}`, value: description })))
+      .setFooter({ text: `tickets-panel:${interaction.guildId}` });
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId("tickets:select")
+      .setPlaceholder("Wybierz kategorię zgłoszenia...")
+      .addOptions(ticketCategories.map(({ key, title, description, emoji }) => ({ label: title, value: key, description, emoji })));
+    await panelChannel.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
+    await interaction.reply({ content: `Panel ticketów opublikowano na ${panelChannel}. Kanały będą tworzone w przypisanych kategoriach, a dostęp otrzyma osoba zgłaszająca i rola ${supportRole}.`, ephemeral: true });
+    return;
+  }
+
+  const panelChannel = interaction.options.getChannel("kanal-panelu", true);
+  const applicationsChannel = interaction.options.getChannel("kanal-podan", true);
+  const reviewerRole = interaction.options.getRole("rola-rekrutacji", true);
+  const acceptedRole = interaction.options.getRole("rola-po-akceptacji", true);
+  if (panelChannel.id === applicationsChannel.id) {
+    await interaction.reply({ content: "Wybierz osobny kanał podań. Powinien być prywatny i widoczny tylko dla zespołu rekrutacji.", ephemeral: true });
+    return;
+  }
+  const everyoneCanView = applicationsChannel.permissionsFor(interaction.guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel);
+  if (everyoneCanView || !applicationsChannel.permissionsFor(reviewerRole)?.has(PermissionFlagsBits.ViewChannel)) {
+    await interaction.reply({ content: "Kanał podań musi być ukryty przed @everyone i dostępny dla wybranej roli rekrutacji.", ephemeral: true });
+    return;
+  }
+  const botMember = await interaction.guild.members.fetchMe();
+  if (!botMember.permissionsIn(panelChannel).has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks]) ||
+      !botMember.permissionsIn(applicationsChannel).has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks])) {
+    await interaction.reply({ content: "Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na obu wskazanych kanałach.", ephemeral: true });
+    return;
+  }
+  await updateWebhookConfig(interaction.guildId, {
+    recruitmentConfig: {
+      panelChannelId: panelChannel.id,
+      applicationsChannelId: applicationsChannel.id,
+      reviewerRoleId: reviewerRole.id,
+      acceptedRoleId: acceptedRole.id,
+    },
+  });
+  const embed = new EmbedBuilder()
+    .setColor(0x3498db)
+    .setTitle("📝 Podanie na stanowisko administratora / moderatora")
+    .setDescription("Kliknij przycisk poniżej. Bot wyśle Ci serię pytań w wiadomości prywatnej, a gotowe podanie trafi do zespołu rekrutacji.")
+    .setFooter({ text: `recruitment-panel:${interaction.guildId}` });
+  const button = new ButtonBuilder()
+    .setCustomId("recruitment:apply")
+    .setLabel("Rozpocznij podanie")
+    .setStyle(ButtonStyle.Primary)
+    .setEmoji("📝");
+  await panelChannel.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(button)] });
+  await interaction.reply({ content: `Panel rekrutacji opublikowano na ${panelChannel}; podania będą wysyłane do prywatnego kanału ${applicationsChannel}.`, ephemeral: true });
+}
+
 async function handleCommand(interaction) {
+  if (interaction.commandName === "setup") {
+    await handleSetupCommand(interaction);
+    return;
+  }
   if (interaction.commandName === "informacja") {
     if (interaction.options.getSubcommand() === "ekonomia") {
       const embed = new EmbedBuilder()
@@ -2298,7 +2425,241 @@ async function handleCommand(interaction) {
   }
 }
 
+function recruitmentPrompt(index) {
+  const item = recruitmentQuestions[index];
+  const section = index === 0 || recruitmentQuestions[index - 1].section !== item.section
+    ? `**${item.section}**\n\n`
+    : "";
+  return `${section}**Pytanie ${index + 1}/${recruitmentQuestions.length}:** ${item.question}\n\nOdpowiedz na tę wiadomość. Wpisz „anuluj”, aby przerwać podanie.`;
+}
+
+async function handleTicketSelect(interaction) {
+  const config = webhookConfigs[interaction.guildId]?.ticketsConfig;
+  const category = ticketCategories.find((item) => item.key === interaction.values[0]);
+  const footer = interaction.message.embeds[0]?.footer?.text;
+  if (!config || !category || interaction.channelId !== config.panelChannelId || footer !== `tickets-panel:${interaction.guildId}`) {
+    await interaction.reply({ content: "Ten panel ticketów nie jest już aktywny. Poproś administrację o ponowne uruchomienie `/setup tickets`.", ephemeral: true });
+    return;
+  }
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const existing = interaction.guild.channels.cache.find((channel) => channel.topic === `ticket:${interaction.user.id}:${category.key}`);
+  if (existing) {
+    await interaction.editReply({ content: `Masz już otwarty ticket tej kategorii: ${existing}.` });
+    return;
+  }
+  const parent = await interaction.guild.channels.fetch(config.categories?.[category.key]);
+  if (!parent || parent.type !== ChannelType.GuildCategory) {
+    throw new Error(`Kategoria „${category.title}” nie istnieje. Poproś administrację o ponowną konfigurację ticketów.`);
+  }
+  const role = await interaction.guild.roles.fetch(config.supportRoleId);
+  if (!role) throw new Error("Rola personelu ticketów nie istnieje. Poproś administrację o ponowną konfigurację.");
+
+  const slug = interaction.user.username.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").slice(0, 24) || "uzytkownik";
+  const channel = await interaction.guild.channels.create({
+    name: `ticket-${category.key}-${slug}`.slice(0, 100),
+    type: ChannelType.GuildText,
+    parent: parent.id,
+    topic: `ticket:${interaction.user.id}:${category.key}`,
+    permissionOverwrites: [
+      { id: interaction.guildId, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles] },
+      { id: role.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages] },
+      { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] },
+    ],
+    reason: `Ticket ${category.title} utworzony przez ${interaction.user.tag}`,
+  });
+  const closeButton = new ButtonBuilder().setCustomId("ticket:close").setLabel("Zamknij ticket").setStyle(ButtonStyle.Danger).setEmoji("🔒");
+  await channel.send({
+    content: `<@${interaction.user.id}> <@&${role.id}>`,
+    embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${category.emoji} ${category.title}`).setDescription("Opisz dokładnie swoją sprawę. Personel odpowie tutaj.")],
+    components: [new ActionRowBuilder().addComponents(closeButton)],
+    allowedMentions: { parse: [], users: [interaction.user.id], roles: [role.id] },
+  });
+  await interaction.editReply({ content: `Utworzono prywatny ticket: ${channel}.` });
+}
+
+async function startRecruitmentApplication(interaction) {
+  const config = webhookConfigs[interaction.guildId]?.recruitmentConfig;
+  const footer = interaction.message.embeds[0]?.footer?.text;
+  if (!config || interaction.channelId !== config.panelChannelId || footer !== `recruitment-panel:${interaction.guildId}`) {
+    await interaction.reply({ content: "Ten panel rekrutacji nie jest już aktywny. Poproś administrację o ponowne uruchomienie `/setup rekru`.", ephemeral: true });
+    return;
+  }
+  const previousSession = recruitmentApplications.get(interaction.user.id);
+  if (previousSession && previousSession.expiresAt > Date.now()) {
+    await interaction.reply({ content: "Masz już rozpoczęte podanie. Dokończ je w DM albo wpisz tam „anuluj”.", ephemeral: true });
+    return;
+  }
+  recruitmentApplications.delete(interaction.user.id);
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const session = { guildId: interaction.guildId, ...config, answers: [], questionIndex: 0, expiresAt: Date.now() + 15 * 60 * 1000 };
+  recruitmentApplications.set(interaction.user.id, session);
+  try {
+    await interaction.user.send(recruitmentPrompt(0));
+    await interaction.editReply({ content: "Wysłałem pierwsze pytanie w DM. Odpowiadaj tam po kolei na wszystkie pytania." });
+  } catch (error) {
+    recruitmentApplications.delete(interaction.user.id);
+    await interaction.editReply({ content: "Nie mogę wysłać Ci DM. Włącz wiadomości prywatne od członków serwera i spróbuj ponownie." });
+  }
+}
+
+async function handleRecruitmentAnswer(message) {
+  const session = recruitmentApplications.get(message.author.id);
+  if (!session) return false;
+  if (session.expiresAt <= Date.now()) {
+    recruitmentApplications.delete(message.author.id);
+    await message.reply("Czas na dokończenie podania minął. Rozpocznij je ponownie z panelu rekrutacji.");
+    return true;
+  }
+  const answer = message.content.trim();
+  if (answer.toLowerCase() === "anuluj") {
+    recruitmentApplications.delete(message.author.id);
+    await message.reply("Podanie anulowane. Możesz rozpocząć ponownie z panelu rekrutacji.");
+    return true;
+  }
+  if (!answer) {
+    await message.reply("Podaj odpowiedź tekstową albo wpisz „anuluj”, aby przerwać.");
+    return true;
+  }
+  if (answer.length > 1000) {
+    await message.reply("Odpowiedź jest za długa. Skróć ją do 1 000 znaków i wyślij ponownie.");
+    return true;
+  }
+  session.answers.push(answer);
+  session.questionIndex += 1;
+  session.expiresAt = Date.now() + 15 * 60 * 1000;
+  if (session.questionIndex < recruitmentQuestions.length) {
+    await message.author.send(recruitmentPrompt(session.questionIndex));
+    return true;
+  }
+
+  recruitmentApplications.delete(message.author.id);
+  const guild = await client.guilds.fetch(session.guildId);
+  const destination = await guild.channels.fetch(session.applicationsChannelId);
+  const reviewerRole = await guild.roles.fetch(session.reviewerRoleId);
+  if (!destination || destination.type !== ChannelType.GuildText || !reviewerRole) {
+    throw new Error("Kanał podań albo rola rekrutacji nie istnieje. Powiadom administrację.");
+  }
+  const groupSize = 4;
+  const pageCount = Math.ceil(recruitmentQuestions.length / groupSize);
+  const embeds = [];
+  for (let page = 0; page < pageCount; page += 1) {
+    const start = page * groupSize;
+    const fields = recruitmentQuestions.slice(start, start + groupSize).map((item, offset) => ({
+      name: `${start + offset + 1}. ${item.question}`,
+      value: session.answers[start + offset],
+    }));
+    const embed = new EmbedBuilder()
+      .setColor(0x3498db)
+      .setTitle(`Podanie rekrutacyjne • ${page + 1}/${pageCount}`)
+      .setDescription(`Kandydat: <@${message.author.id}> (${message.author.tag})`)
+      .addFields(fields)
+      .setTimestamp();
+    if (page === 0) {
+      embed.setFooter({ text: `recruitment-application:${session.guildId}:${message.author.id}:pending` });
+    }
+    embeds.push(embed);
+  }
+  const decisionRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("recruitment:approve").setLabel("Akceptuj i nadaj rolę").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("recruitment:reject").setLabel("Odrzuć podanie").setStyle(ButtonStyle.Danger),
+  );
+  const reviewHeader = {
+    content: `<@&${reviewerRole.id}> Nowe podanie od <@${message.author.id}>.`,
+    allowedMentions: { parse: [], roles: [reviewerRole.id], users: [message.author.id] },
+  };
+  await destination.send({
+    ...reviewHeader,
+    embeds: [embeds[0]],
+    components: [decisionRow],
+  });
+  for (const embed of embeds.slice(1)) {
+    await destination.send({ embeds: [embed], allowedMentions: { parse: [] } });
+  }
+  await message.author.send("Dziękujemy! Twoje podanie zostało wysłane do zespołu rekrutacji.");
+  return true;
+}
+
+async function handleRecruitmentDecision(interaction, approve) {
+  const firstEmbed = interaction.message.embeds[0];
+  const match = firstEmbed?.footer?.text?.match(/^recruitment-application:(\d+):(\d+):pending$/);
+  const config = webhookConfigs[interaction.guildId]?.recruitmentConfig;
+  if (!match || !config || match[1] !== interaction.guildId || interaction.channelId !== config.applicationsChannelId) {
+    await interaction.reply({ content: "To podanie zostało już rozpatrzone albo jego konfiguracja jest nieaktualna.", ephemeral: true });
+    return;
+  }
+  const member = await interaction.guild.members.fetch(interaction.user.id);
+  if (!member.permissions.has(PermissionFlagsBits.ManageGuild) && !member.roles.cache.has(config.reviewerRoleId)) {
+    await interaction.reply({ content: "Tylko zespół rekrutacji może rozpatrywać podania.", ephemeral: true });
+    return;
+  }
+  if (recruitmentDecisionLocks.has(interaction.message.id)) {
+    await interaction.reply({ content: "To podanie jest już rozpatrywane.", ephemeral: true });
+    return;
+  }
+  recruitmentDecisionLocks.add(interaction.message.id);
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const applicantId = match[2];
+    const applicant = await interaction.guild.members.fetch(applicantId).catch(() => null);
+    if (approve) {
+      if (!applicant) throw new Error("Kandydat opuścił serwer; nie można nadać mu roli.");
+      const role = await interaction.guild.roles.fetch(config.acceptedRoleId);
+      if (!role || role.id === interaction.guildId || role.managed) {
+        throw new Error("Rola po akceptacji nie istnieje albo nie może być nadana.");
+      }
+      const botMember = await interaction.guild.members.fetchMe();
+      if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles) || botMember.roles.highest.comparePositionTo(role) <= 0) {
+        throw new Error(`Bot potrzebuje uprawnienia Zarządzanie rolami oraz najwyższej roli powyżej ${role}.`);
+      }
+      await applicant.roles.add(role, `Podanie zaakceptowane przez ${interaction.user.tag}`);
+      await applicant.send(`Twoje podanie na stanowisko administratora / moderatora na serwerze ${interaction.guild.name} zostało zaakceptowane. Nadano Ci rolę ${role.name}.`).catch(() => {});
+    } else if (applicant) {
+      await applicant.send(`Twoje podanie na stanowisko administratora / moderatora na serwerze ${interaction.guild.name} zostało odrzucone.`).catch(() => {});
+    }
+
+    const decisionText = approve
+      ? `✅ Zaakceptowano przez <@${interaction.user.id}>; nadano rolę <@&${config.acceptedRoleId}>.`
+      : `❌ Odrzucono przez <@${interaction.user.id}>.`;
+    const updatedEmbed = EmbedBuilder.from(firstEmbed)
+      .setFooter({ text: `recruitment-application:${match[1]}:${applicantId}:${approve ? "accepted" : "rejected"}` })
+      .addFields({ name: "Decyzja", value: decisionText });
+    await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
+    await interaction.editReply({ content: approve ? "Podanie zaakceptowane i rola nadana." : "Podanie odrzucone." });
+  } finally {
+    recruitmentDecisionLocks.delete(interaction.message.id);
+  }
+}
+
 async function handleButton(interaction) {
+  if (interaction.customId === "recruitment:apply") {
+    await startRecruitmentApplication(interaction);
+    return;
+  }
+  if (interaction.customId === "recruitment:approve" || interaction.customId === "recruitment:reject") {
+    await handleRecruitmentDecision(interaction, interaction.customId === "recruitment:approve");
+    return;
+  }
+  if (interaction.customId === "ticket:close") {
+    const match = interaction.channel?.topic?.match(/^ticket:(\d+):([a-z-]+)$/);
+    if (!match) {
+      await interaction.reply({ content: "Nie rozpoznaję tego kanału jako ticketu.", ephemeral: true });
+      return;
+    }
+    const supportRoleId = webhookConfigs[interaction.guildId]?.ticketsConfig?.supportRoleId;
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const isOwner = match[1] === interaction.user.id;
+    const isStaff = Boolean(supportRoleId && member.roles.cache.has(supportRoleId));
+    if (!isOwner && !isStaff && !member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+      await interaction.reply({ content: "Tylko autor ticketu lub personel może go zamknąć.", ephemeral: true });
+      return;
+    }
+    await interaction.reply({ content: "Ticket zostanie zamknięty i kanał usunięty za 5 sekund.", ephemeral: true });
+    setTimeout(() => interaction.channel.delete("Ticket zamknięty przez użytkownika lub personel.").catch((error) => {
+      console.error("Nie udało się usunąć zamkniętego ticketu:", error);
+    }), 5000);
+    return;
+  }
   if (interaction.customId === "activity-check:participate") {
     const config = webhookConfigs[interaction.guildId];
     const checkEmbed = interaction.message.embeds[0];
@@ -3586,7 +3947,14 @@ client.once("ready", async () => {
 
 client.on("messageCreate", (message) => {
   if (!message.guild) {
-    if (weaponPermitIdentityRequests[message.author.id]) {
+    if (recruitmentApplications.has(message.author.id)) {
+      handleRecruitmentAnswer(message).catch((error) => {
+        recruitmentApplications.delete(message.author.id);
+        console.error("Nie udało się obsłużyć podania rekrutacyjnego:", error);
+        message.author.send("Wystąpił błąd podczas zapisywania podania. Powiadom administrację i rozpocznij je ponownie.")
+          .catch((replyError) => console.error("Nie udało się powiadomić o błędzie podania:", replyError));
+      });
+    } else if (weaponPermitIdentityRequests[message.author.id]) {
       handleWeaponPermitIdentityAnswer(message).catch((error) => {
         console.error("Nie udało się opublikować pozwolenia na broń:", error);
         message.reply(`Nie udało się opublikować pozwolenia: ${error.message} Twoja odpowiedź została zachowana; sprawdź dane i spróbuj ponownie.`)
@@ -3671,6 +4039,8 @@ client.on("interactionCreate", async (interaction) => {
       await handleCommand(interaction);
     } else if (interaction.isButton()) {
       await handleButton(interaction);
+    } else if (interaction.isStringSelectMenu() && interaction.customId === "tickets:select") {
+      await handleTicketSelect(interaction);
     } else if (interaction.isModalSubmit()) {
       await handleModal(interaction);
     }
