@@ -136,19 +136,7 @@ const setupCommand = new SlashCommandBuilder()
         option.setName("kanal-panelu").setDescription("Kanał, na którym opublikować panel.").addChannelTypes(ChannelType.GuildText).setRequired(true),
       )
       .addChannelOption((option) =>
-        option.setName("kategoria-pytania").setDescription("Kategoria kanałów dla pytań ogólnych.").addChannelTypes(ChannelType.GuildCategory).setRequired(true),
-      )
-      .addChannelOption((option) =>
-        option.setName("kategoria-eh").setDescription("Kategoria kanałów dla zgłoszeń Emergency Hamburg.").addChannelTypes(ChannelType.GuildCategory).setRequired(true),
-      )
-      .addChannelOption((option) =>
-        option.setName("kategoria-discord").setDescription("Kategoria kanałów dla zgłoszeń Discord.").addChannelTypes(ChannelType.GuildCategory).setRequired(true),
-      )
-      .addChannelOption((option) =>
-        option.setName("kategoria-techniczna").setDescription("Kategoria kanałów dla pomocy technicznej.").addChannelTypes(ChannelType.GuildCategory).setRequired(true),
-      )
-      .addChannelOption((option) =>
-        option.setName("kategoria-odwolania").setDescription("Kategoria kanałów dla odwołań od bana.").addChannelTypes(ChannelType.GuildCategory).setRequired(true),
+        option.setName("kategoria-ticketow").setDescription("Jedna kategoria Discord, w której będą tworzone wszystkie tickety.").addChannelTypes(ChannelType.GuildCategory).setRequired(true),
       )
       .addRoleOption((option) =>
         option.setName("rola-personelu").setDescription("Rola, która może widzieć i obsługiwać tickety.").setRequired(true),

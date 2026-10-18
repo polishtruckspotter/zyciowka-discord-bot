@@ -41,11 +41,11 @@ const waitingRoomPingCooldowns = new Map();
 const recruitmentApplications = new Map();
 const recruitmentDecisionLocks = new Set();
 const ticketCategories = [
-  { key: "general", title: "Pytanie / Pomoc Ogólna", description: "Ogólne pytania dotyczące rozgrywki, zasad serwera oraz wątpliwości.", emoji: "❓", option: "kategoria-pytania" },
-  { key: "eh", title: "Zgłoszenie EH", description: "Zgłoszenia dotyczące pojazdów, mechanik oraz wydarzeń w grze.", emoji: "🚔", option: "kategoria-eh" },
-  { key: "discord", title: "Zgłoszenie Discord", description: "Zgłoszenie złamania regulaminu Discord lub problemów z użytkownikami.", emoji: "💬", option: "kategoria-discord" },
-  { key: "technical", title: "Pomoc Techniczna", description: "Problemy techniczne, brak rangi, błędy dostępu lub inne usterki.", emoji: "🆘", option: "kategoria-techniczna" },
-  { key: "ban-appeal", title: "Odwołanie od Bana", description: "Wniosek o unban lub apelacja od nałożonej kary.", emoji: "⚖️", option: "kategoria-odwolania" },
+  { key: "general", title: "Pytanie / Pomoc Ogólna", description: "Ogólne pytania dotyczące rozgrywki, zasad serwera oraz wątpliwości.", emoji: "❓" },
+  { key: "eh", title: "Zgłoszenie EH", description: "Zgłoszenia dotyczące pojazdów, mechanik oraz wydarzeń w grze.", emoji: "🚔" },
+  { key: "discord", title: "Zgłoszenie Discord", description: "Zgłoszenie złamania regulaminu Discord lub problemów z użytkownikami.", emoji: "💬" },
+  { key: "technical", title: "Pomoc Techniczna", description: "Problemy techniczne, brak rangi, błędy dostępu lub inne usterki.", emoji: "🆘" },
+  { key: "ban-appeal", title: "Odwołanie od Bana", description: "Wniosek o unban lub apelacja od nałożonej kary.", emoji: "⚖️" },
 ];
 const recruitmentQuestions = [
   { section: "INFORMACJE O KANDYDACIE", question: "Imię / nick w grze: podaj imię lub nick z Roblox / Discord." },
@@ -1316,16 +1316,10 @@ async function handleSetupCommand(interaction) {
   const subcommand = interaction.options.getSubcommand(true);
   if (subcommand === "tickets") {
     const panelChannel = interaction.options.getChannel("kanal-panelu", true);
+    const ticketParent = interaction.options.getChannel("kategoria-ticketow", true);
     const supportRole = interaction.options.getRole("rola-personelu", true);
-    const categories = Object.fromEntries(
-      ticketCategories.map((category) => [
-        category.key,
-        interaction.options.getChannel(category.option, true),
-      ]),
-    );
-    const categoryIds = Object.values(categories).map((category) => category.id);
-    if (new Set(categoryIds).size !== ticketCategories.length) {
-      await interaction.reply({ content: "Wybierz pięć różnych kategorii kanałów dla ticketów.", ephemeral: true });
+    if (ticketParent.type !== ChannelType.GuildCategory) {
+      await interaction.reply({ content: "Wybierz kategorię Discord dla kanałów ticketów.", ephemeral: true });
       return;
     }
     if (supportRole.id === interaction.guildId || supportRole.managed) {
@@ -1347,7 +1341,7 @@ async function handleSetupCommand(interaction) {
     const config = {
       panelChannelId: panelChannel.id,
       supportRoleId: supportRole.id,
-      categories: Object.fromEntries(Object.entries(categories).map(([key, channel]) => [key, channel.id])),
+      categories: Object.fromEntries(ticketCategories.map(({ key }) => [key, ticketParent.id])),
     };
     await updateWebhookConfig(interaction.guildId, { ticketsConfig: config });
     const embed = new EmbedBuilder()
