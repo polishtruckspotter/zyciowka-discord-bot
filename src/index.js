@@ -20,6 +20,7 @@ const {
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
+  UserSelectMenuBuilder,
 } = require("discord.js");
 const { commands } = require("./commands");
 
@@ -143,6 +144,7 @@ const maxGamblingBet = 3000;
 let activityCheckUpdateQueue = Promise.resolve();
 let economyUpdateQueue = Promise.resolve();
 let mafiaUpdateQueue = Promise.resolve();
+const mafiaCreationSessions = new Map();
 let weaponPermitIdentityRequests = {};
 let webhookConfigs = {};
 let economyData = {};
@@ -1405,7 +1407,24 @@ async function handleSetupCommand(interaction) {
 }
 
 async function handleCommand(interaction) {
-  if (["otworz", "stworz"].includes(interaction.commandName) && interaction.options.getSubcommand() === "mafie") {
+  if (interaction.commandName === "stworz" && interaction.options.getSubcommand() === "mafie") {
+    if (interaction.channelId !== mafiaRegistrationChannelId) {
+      await interaction.reply({ content: `Panel utwórz na kanale <#${mafiaRegistrationChannelId}>.`, ephemeral: true });
+      return;
+    }
+    const channel = await interaction.guild.channels.fetch(mafiaRegistrationChannelId);
+    if (!channel?.isTextBased()) throw new Error("Nie mogę znaleźć kanału panelu mafii.");
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("mafia:create").setLabel("Stwórz mafię").setStyle(ButtonStyle.Primary),
+    );
+    await channel.send({
+      embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle("Rejestracja mafii").setDescription("Kliknij przycisk poniżej, aby zgłosić nową mafię. Numer i kolor muszą być unikalne.")],
+      components: [row],
+    });
+    await interaction.reply({ content: "Panel tworzenia mafii został opublikowany.", ephemeral: true });
+    return;
+  }
+  if (interaction.commandName === "otworz" && interaction.options.getSubcommand() === "mafie") {
     if (interaction.channelId !== mafiaRegistrationChannelId) {
       await interaction.reply({ content: `Tej komendy użyj na kanale <#${mafiaRegistrationChannelId}>.`, ephemeral: true });
       return;
@@ -1414,9 +1433,9 @@ async function handleCommand(interaction) {
     const name = interaction.options.getString("nazwa", true).trim();
     const color = interaction.options.getString("kolor", true).trim();
     const license = interaction.options.getString("licencja", true).trim();
-    const owner = interaction.options.getUser("wlasciciel") || interaction.user;
-    const coOwner = interaction.options.getUser("wspolwlasciciel") || interaction.user;
-    const memberCount = interaction.options.getInteger("liczba-osob") || 1;
+    const owner = interaction.user;
+    const coOwner = interaction.user;
+    const memberCount = 1;
     const pendingUpdate = mafiaUpdateQueue.catch(() => {}).then(async () => {
       let mafias = [];
       try {
@@ -2687,6 +2706,25 @@ async function handleRecruitmentDecision(interaction, approve) {
 }
 
 async function handleButton(interaction) {
+  if (interaction.customId === "mafia:create") {
+    if (interaction.channelId !== mafiaRegistrationChannelId) {
+      await interaction.reply({ content: "Ten panel nie działa na tym kanale.", ephemeral: true });
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId("mafia:details").setTitle("Dane nowej mafii");
+    const fields = [
+      ["number", "Numer mafii", "Wpisz unikalny numer", TextInputStyle.Short],
+      ["name", "Nazwa mafii", "Wpisz nazwę", TextInputStyle.Short],
+      ["color", "Kolor mafii", "Wpisz unikalny kolor", TextInputStyle.Short],
+      ["license", "Licencja", "Wpisz numer lub dane licencji", TextInputStyle.Short],
+      ["member-count", "Liczba osób w mafii", "Wpisz liczbę osób", TextInputStyle.Short],
+    ];
+    modal.addComponents(...fields.map(([id, label, placeholder, style]) =>
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId(id).setLabel(label).setPlaceholder(placeholder).setStyle(style).setRequired(true)),
+    ));
+    await interaction.showModal(modal);
+    return;
+  }
   if (interaction.customId === "recruitment:apply") {
     await startRecruitmentApplication(interaction);
     return;
@@ -3364,7 +3402,94 @@ async function handleButton(interaction) {
   await interaction.showModal(modal);
 }
 
+async function handleMafiaUserSelect(interaction) {
+  const sessionKey = `${interaction.guildId}:${interaction.user.id}`;
+  const mafia = mafiaCreationSessions.get(sessionKey);
+  if (!mafia || Date.now() - mafia.timestamp > 15 * 60 * 1000) {
+    mafiaCreationSessions.delete(sessionKey);
+    await interaction.update({ content: "Formularz wygasł. Kliknij przycisk tworzenia mafii i wypełnij go ponownie.", components: [] });
+    return;
+  }
+  if (interaction.customId === "mafia:owner") mafia.ownerId = interaction.values[0];
+  else mafia.coOwnerId = interaction.values[0];
+  if (mafia.finalizing) {
+    await interaction.deferUpdate();
+    return;
+  }
+  if (!mafia.ownerId || !mafia.coOwnerId) {
+    await interaction.deferUpdate();
+    return;
+  }
+  mafia.finalizing = true;
+  const pendingUpdate = mafiaUpdateQueue.catch(() => {}).then(async () => {
+    let mafias = [];
+    try {
+      mafias = JSON.parse(await fs.readFile(mafiasDataPath, "utf8"));
+      if (!Array.isArray(mafias)) throw new Error("Nieprawidłowy format rejestru mafii.");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (mafias.some((record) => record.guildId === mafia.guildId && record.number === mafia.number)) return "Ten numer mafii jest już zajęty.";
+    if (mafias.some((record) => record.guildId === mafia.guildId && record.color.trim().toLocaleLowerCase("pl") === mafia.color.toLocaleLowerCase("pl"))) return "Ten kolor mafii jest już zajęty.";
+    mafias.push(mafia);
+    await fs.mkdir(path.dirname(mafiasDataPath), { recursive: true });
+    const temporaryPath = `${mafiasDataPath}.${process.pid}.tmp`;
+    await fs.writeFile(temporaryPath, `${JSON.stringify(mafias, null, 2)}\n`, "utf8");
+    await fs.rename(temporaryPath, mafiasDataPath);
+    return null;
+  });
+  mafiaUpdateQueue = pendingUpdate;
+  const conflict = await pendingUpdate;
+  if (conflict) {
+    mafiaCreationSessions.delete(sessionKey);
+    await interaction.update({ content: `${conflict} Wypełnij formularz ponownie z nowym numerem lub kolorem.`, components: [] });
+    return;
+  }
+  const destination = await interaction.guild.channels.fetch(mafiaPublicationChannelId);
+  if (!destination?.isTextBased()) throw new Error("Nie mogę znaleźć kanału publikacji mafii.");
+  const embed = new EmbedBuilder().setColor(0x2ecc71).setTitle(`Mafia ${mafia.name}`).addFields(
+    { name: "Numer", value: String(mafia.number), inline: true },
+    { name: "Nazwa", value: mafia.name, inline: true },
+    { name: "Kolor", value: mafia.color, inline: true },
+    { name: "Licencja", value: mafia.license, inline: true },
+    { name: "Właściciel", value: `<@${mafia.ownerId}>`, inline: true },
+    { name: "Współwłaściciel", value: `<@${mafia.coOwnerId}>`, inline: true },
+    { name: "Liczba osób", value: String(mafia.memberCount), inline: true },
+  ).setFooter({ text: `Utworzył: ${mafia.createdBy}` });
+  await destination.send({ embeds: [embed] });
+  mafiaCreationSessions.delete(sessionKey);
+  await interaction.update({ content: `Mafia **${mafia.name}** została zapisana i opublikowana na <#${mafiaPublicationChannelId}>.`, components: [] });
+}
+
 async function handleModal(interaction) {
+  if (interaction.customId === "mafia:details") {
+    if (interaction.channelId !== mafiaRegistrationChannelId) {
+      await interaction.reply({ content: "Formularz musi zostać wysłany na kanale rejestracji mafii.", ephemeral: true });
+      return;
+    }
+    const numberRaw = interaction.fields.getTextInputValue("number").trim();
+    const memberCountRaw = interaction.fields.getTextInputValue("member-count").trim();
+    if (!/^\d+$/.test(numberRaw) || Number(numberRaw) < 1 || !/^\d+$/.test(memberCountRaw) || Number(memberCountRaw) < 1) {
+      await interaction.reply({ content: "Numer mafii i liczba osób muszą być dodatnimi liczbami całkowitymi.", ephemeral: true });
+      return;
+    }
+    const sessionKey = `${interaction.guildId}:${interaction.user.id}`;
+    mafiaCreationSessions.set(sessionKey, {
+      guildId: interaction.guildId,
+      number: Number(numberRaw),
+      name: interaction.fields.getTextInputValue("name").trim(),
+      color: interaction.fields.getTextInputValue("color").trim(),
+      license: interaction.fields.getTextInputValue("license").trim(),
+      memberCount: Number(memberCountRaw),
+      createdBy: interaction.user.id,
+      createdAt: new Date().toISOString(),
+      timestamp: Date.now(),
+    });
+    const ownerSelect = new ActionRowBuilder().addComponents(new UserSelectMenuBuilder().setCustomId("mafia:owner").setPlaceholder("Wybierz właściciela").setMinValues(1).setMaxValues(1));
+    const coOwnerSelect = new ActionRowBuilder().addComponents(new UserSelectMenuBuilder().setCustomId("mafia:co-owner").setPlaceholder("Wybierz współwłaściciela").setMinValues(1).setMaxValues(1));
+    await interaction.reply({ content: "Wybierz właściciela i współwłaściciela mafii:", components: [ownerSelect, coOwnerSelect], ephemeral: true });
+    return;
+  }
   if (interaction.customId === "activity-check:submit") {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const config = webhookConfigs[interaction.guildId];
@@ -4096,6 +4221,8 @@ client.on("interactionCreate", async (interaction) => {
       await handleButton(interaction);
     } else if (interaction.isStringSelectMenu() && interaction.customId === "tickets:select") {
       await handleTicketSelect(interaction);
+    } else if (interaction.isUserSelectMenu() && interaction.customId.startsWith("mafia:")) {
+      await handleMafiaUserSelect(interaction);
     } else if (interaction.isModalSubmit()) {
       await handleModal(interaction);
     }
