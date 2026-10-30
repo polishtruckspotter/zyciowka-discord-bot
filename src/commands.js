@@ -125,6 +125,43 @@ const vehicleRegistrationCommand = new SlashCommandBuilder()
       .setDescription("Publikuje instrukcję rejestracji pojazdu."),
   );
 
+const mafiaRegistrationCommand = new SlashCommandBuilder()
+  .setName("otworz")
+  .setDescription("Otwiera lub rejestruje działalność.")
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("mafie")
+      .setDescription("Rejestruje nową mafię na serwerze.")
+      .addIntegerOption((option) =>
+        option.setName("numer").setDescription("Unikalny numer mafii.").setMinValue(1).setRequired(true),
+      )
+      .addStringOption((option) =>
+        option.setName("nazwa").setDescription("Nazwa mafii.").setMinLength(1).setMaxLength(100).setRequired(true),
+      )
+      .addStringOption((option) =>
+        option.setName("kolor").setDescription("Unikalny kolor mafii, np. czerwony lub #FF0000.").setMinLength(1).setMaxLength(50).setRequired(true),
+      )
+      .addStringOption((option) =>
+        option.setName("licencja").setDescription("Numer lub dane licencji mafii.").setMinLength(1).setMaxLength(100).setRequired(true),
+      ),
+  );
+
+const createMafiaCommand = new SlashCommandBuilder()
+  .setName("stworz")
+  .setDescription("Tworzy wpis nowej mafii.")
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("mafie")
+      .setDescription("Publikuje pełne informacje o mafii.")
+      .addIntegerOption((option) => option.setName("numer").setDescription("Unikalny numer mafii.").setMinValue(1).setRequired(true))
+      .addStringOption((option) => option.setName("nazwa").setDescription("Nazwa mafii.").setMinLength(1).setMaxLength(100).setRequired(true))
+      .addStringOption((option) => option.setName("kolor").setDescription("Unikalny kolor mafii.").setMinLength(1).setMaxLength(50).setRequired(true))
+      .addStringOption((option) => option.setName("licencja").setDescription("Numer lub dane licencji.").setMinLength(1).setMaxLength(100).setRequired(true))
+      .addUserOption((option) => option.setName("wlasciciel").setDescription("Właściciel mafii.").setRequired(true))
+      .addUserOption((option) => option.setName("wspolwlasciciel").setDescription("Współwłaściciel mafii.").setRequired(true))
+      .addIntegerOption((option) => option.setName("liczba-osob").setDescription("Liczba osób w mafii.").setMinValue(1).setRequired(true)),
+  );
+
 const setupCommand = new SlashCommandBuilder()
   .setName("setup")
   .setDescription("Konfiguruje panele zgłoszeń i rekrutacji.")
@@ -203,6 +240,8 @@ const commands = [
   activityCheckCommand,
   botKickCommand,
   vehicleRegistrationCommand,
+  mafiaRegistrationCommand,
+  createMafiaCommand,
   findRecordCommand,
   new SlashCommandBuilder()
     .setName("informacja")

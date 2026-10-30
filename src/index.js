@@ -133,12 +133,16 @@ const activityCheckParticipantsPath = path.join(
   "activity-check-participants.json",
 );
 const economyDataPath = path.join(__dirname, "..", "data", "economy.json");
+const mafiasDataPath = path.join(__dirname, "..", "data", "mafias.json");
+const mafiaRegistrationChannelId = "1561435547208126578";
+const mafiaPublicationChannelId = "1561435547208126580";
 const workCooldownMs = 60 * 60 * 1000;
 const dailyCooldownMs = 24 * 60 * 60 * 1000;
 const robberyCooldownMs = 5 * 60 * 1000;
 const maxGamblingBet = 3000;
 let activityCheckUpdateQueue = Promise.resolve();
 let economyUpdateQueue = Promise.resolve();
+let mafiaUpdateQueue = Promise.resolve();
 let weaponPermitIdentityRequests = {};
 let webhookConfigs = {};
 let economyData = {};
@@ -1401,6 +1405,63 @@ async function handleSetupCommand(interaction) {
 }
 
 async function handleCommand(interaction) {
+  if (["otworz", "stworz"].includes(interaction.commandName) && interaction.options.getSubcommand() === "mafie") {
+    if (interaction.channelId !== mafiaRegistrationChannelId) {
+      await interaction.reply({ content: `Tej komendy użyj na kanale <#${mafiaRegistrationChannelId}>.`, ephemeral: true });
+      return;
+    }
+    const number = interaction.options.getInteger("numer", true);
+    const name = interaction.options.getString("nazwa", true).trim();
+    const color = interaction.options.getString("kolor", true).trim();
+    const license = interaction.options.getString("licencja", true).trim();
+    const owner = interaction.options.getUser("wlasciciel") || interaction.user;
+    const coOwner = interaction.options.getUser("wspolwlasciciel") || interaction.user;
+    const memberCount = interaction.options.getInteger("liczba-osob") || 1;
+    const pendingUpdate = mafiaUpdateQueue.catch(() => {}).then(async () => {
+      let mafias = [];
+      try {
+        mafias = JSON.parse(await fs.readFile(mafiasDataPath, "utf8"));
+        if (!Array.isArray(mafias)) throw new Error("Nieprawidłowy format rejestru mafii.");
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      if (mafias.some((mafia) => mafia.guildId === interaction.guildId && mafia.number === number)) {
+        return "Ten numer mafii jest już zajęty.";
+      }
+      if (mafias.some((mafia) => mafia.guildId === interaction.guildId && mafia.color.trim().toLocaleLowerCase("pl") === color.toLocaleLowerCase("pl"))) {
+        return "Ten kolor mafii jest już zajęty.";
+      }
+      mafias.push({ guildId: interaction.guildId, number, name, color, license, ownerId: owner.id, coOwnerId: coOwner.id, memberCount, createdBy: interaction.user.id, createdAt: new Date().toISOString() });
+      await fs.mkdir(path.dirname(mafiasDataPath), { recursive: true });
+      const temporaryPath = `${mafiasDataPath}.${process.pid}.tmp`;
+      await fs.writeFile(temporaryPath, `${JSON.stringify(mafias, null, 2)}\n`, "utf8");
+      await fs.rename(temporaryPath, mafiasDataPath);
+      return null;
+    });
+    mafiaUpdateQueue = pendingUpdate;
+    const error = await pendingUpdate;
+    if (error) {
+      await interaction.reply({ content: error, ephemeral: true });
+      return;
+    }
+    const mafiaEmbed = new EmbedBuilder().setColor(0x2ecc71).setTitle(`Mafia ${name}`).addFields(
+        { name: "Numer", value: String(number), inline: true },
+        { name: "Nazwa", value: name, inline: true },
+        { name: "Kolor", value: color, inline: true },
+        { name: "Licencja", value: license, inline: true },
+        { name: "Właściciel", value: `<@${owner.id}>`, inline: true },
+        { name: "Współwłaściciel", value: `<@${coOwner.id}>`, inline: true },
+        { name: "Liczba osób", value: String(memberCount), inline: true },
+      ).setFooter({ text: `Utworzył: ${interaction.user.tag}` });
+    const publicationChannel = await interaction.guild.channels.fetch(mafiaPublicationChannelId);
+    if (!publicationChannel?.isTextBased()) {
+      await interaction.reply({ content: "Nie mogę znaleźć kanału publikacji mafii.", ephemeral: true });
+      return;
+    }
+    await publicationChannel.send({ embeds: [mafiaEmbed] });
+    await interaction.reply({ content: "Mafia została zarejestrowana i opublikowana.", ephemeral: true });
+    return;
+  }
   if (interaction.commandName === "setup") {
     await handleSetupCommand(interaction);
     return;
