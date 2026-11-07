@@ -141,24 +141,50 @@ const mafiaRegistrationCommand = new SlashCommandBuilder()
       .addStringOption((option) =>
         option.setName("kolor").setDescription("Unikalny kolor mafii, np. czerwony lub #FF0000.").setMinLength(1).setMaxLength(50).setRequired(true),
       )
-      .addStringOption((option) =>
-        option.setName("licencja").setDescription("Numer lub dane licencji mafii.").setMinLength(1).setMaxLength(100).setRequired(true),
+      .addIntegerOption((option) =>
+        option
+          .setName("lokalizacja")
+          .setDescription("Numer lokalizacji mafii z mapy.")
+          .addChoices(...Array.from({ length: 9 }, (_, index) => ({ name: String(index + 1), value: index + 1 })))
+          .setRequired(true),
       ),
   );
 
-const createMafiaCommand = new SlashCommandBuilder()
-  .setName("stworz")
-  .setDescription("Konfiguruje panel tworzenia mafii.")
+const closeCommand = new SlashCommandBuilder()
+  .setName("close")
+  .setDescription("Zamyka zarejestrowaną mafię.")
   .addSubcommand((subcommand) =>
     subcommand
-      .setName("mafie")
-      .setDescription("Publikuje panel tworzenia mafii."),
+      .setName("mafia")
+      .setDescription("Oznacza mafię jako zamkniętą.")
+      .addStringOption((option) =>
+        option
+          .setName("nazwa")
+          .setDescription("Nazwa mafii do zamknięcia.")
+          .setMinLength(1)
+          .setMaxLength(100)
+          .setRequired(true),
+      ),
   )
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
 
 const setupCommand = new SlashCommandBuilder()
   .setName("setup")
-  .setDescription("Konfiguruje panele zgłoszeń i rekrutacji.")
+  .setDescription("Konfiguruje panele zgłoszeń, rekrutacji i mafii.")
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("mafie")
+      .setDescription("Publikuje panel zgłoszeń mafii i ustawia kanały.")
+      .addChannelOption((option) =>
+        option.setName("kanal-panelu").setDescription("Kanał z panelem i przyciskiem zgłoszenia.").addChannelTypes(ChannelType.GuildText).setRequired(true),
+      )
+      .addChannelOption((option) =>
+        option.setName("kanal-wnioskow").setDescription("Kanał, na który trafią zgłoszenia do rozpatrzenia.").addChannelTypes(ChannelType.GuildText).setRequired(true),
+      )
+      .addChannelOption((option) =>
+        option.setName("kanal-publikacji").setDescription("Kanał publikacji zaakceptowanych mafii.").addChannelTypes(ChannelType.GuildText).setRequired(true),
+      ),
+  )
   .addSubcommand((subcommand) =>
     subcommand
       .setName("tickets")
@@ -235,7 +261,7 @@ const commands = [
   botKickCommand,
   vehicleRegistrationCommand,
   mafiaRegistrationCommand,
-  createMafiaCommand,
+  closeCommand,
   findRecordCommand,
   new SlashCommandBuilder()
     .setName("informacja")
