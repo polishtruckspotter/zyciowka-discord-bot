@@ -1706,7 +1706,7 @@ async function handleCommand(interaction) {
     };
     const pendingUpdate = mafiaUpdateQueue.catch(() => {}).then(async () => {
       const mafias = await readMafiaRecords();
-      if (mafias.some((record) => record.guildId === interaction.guildId && record.location === location)) {
+      if (mafias.some((record) => record.guildId === interaction.guildId && record.status !== "Zamknięta" && record.location === location)) {
         return "Ta lokalizacja jest już zajęta przez inną mafię.";
       }
       if (mafias.some((mafia) => mafia.guildId === interaction.guildId && mafia.color.trim().toLocaleLowerCase("pl") === color.toLocaleLowerCase("pl"))) {
@@ -3041,7 +3041,7 @@ async function handleMafiaDecision(interaction, approve) {
         const records = await readMafiaRecords();
         const existingRequest = records.find((record) => record.requestMessageId === mafia.requestMessageId);
         if (existingRequest) return null;
-        if (records.some((record) => record.guildId === mafia.guildId && record.location === mafia.location)) {
+        if (records.some((record) => record.guildId === mafia.guildId && record.status !== "Zamknięta" && record.location === mafia.location)) {
           return "Ta lokalizacja jest już zajęta przez inną mafię.";
         }
         if ((await getPendingMafiaLocations(interaction.channel, mafia.requestMessageId)).has(mafia.location)) {
@@ -3841,7 +3841,7 @@ async function finalizeMafiaRequest(interaction, sessionKey, mafia) {
     if (!config) throw new Error("Panel mafii nie jest już skonfigurowany. Poproś administratora o ponowne uruchomienie `/setup mafie`.");
     const pendingUpdate = mafiaUpdateQueue.catch(() => {}).then(async () => {
       const records = await readMafiaRecords();
-      if (records.some((record) => record.guildId === mafia.guildId && record.location === mafia.location)) {
+      if (records.some((record) => record.guildId === mafia.guildId && record.status !== "Zamknięta" && record.location === mafia.location)) {
         return "Ta lokalizacja jest już zajęta przez inną mafię.";
       }
       if (records.some((record) => record.guildId === mafia.guildId && record.color.trim().toLocaleLowerCase("pl") === mafia.color.toLocaleLowerCase("pl"))) {
@@ -3910,7 +3910,7 @@ async function handleModal(interaction) {
     const pendingLocations = await getPendingMafiaLocations(requestsChannel);
     const occupiedLocations = new Set([
       ...records
-        .filter((record) => record.guildId === interaction.guildId)
+        .filter((record) => record.guildId === interaction.guildId && record.status !== "Zamknięta")
         .map((record) => record.location),
       ...pendingLocations,
     ]);
