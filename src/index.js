@@ -701,7 +701,6 @@ function buildMafiaEmbed(mafia, status) {
     )
     .setTitle(`Mafia ${mafia.name}`)
     .addFields(
-      { name: "Numer", value: String(mafia.number), inline: true },
       { name: "Nazwa", value: mafia.name, inline: true },
       { name: "Kolor", value: mafia.color, inline: true },
       { name: "Właściciel", value: `<@${mafia.ownerId}>`, inline: true },
@@ -718,7 +717,7 @@ function buildMafiaEmbed(mafia, status) {
   return embed.setFooter({
     text: status
       ? `mafia-request:${mafia.guildId}:${mafia.createdBy}`
-      : `mafia:${mafia.guildId}:${mafia.number}`,
+      : `mafia:${mafia.guildId}:${mafia.location}`,
   });
 }
 
@@ -731,7 +730,10 @@ async function findMafiaPublicationMessage(channel, mafia) {
     }
   }
 
-  const expectedFooter = `mafia:${mafia.guildId}:${mafia.number}`;
+  const expectedFooters = new Set([
+    `mafia:${mafia.guildId}:${mafia.location}`,
+    ...(Number.isInteger(mafia.number) ? [`mafia:${mafia.guildId}:${mafia.number}`] : []),
+  ]);
   const maxScannedMessages = 5000;
   let scanned = 0;
   let before;
@@ -743,7 +745,11 @@ async function findMafiaPublicationMessage(channel, mafia) {
     const match = messages.find(
       (message) =>
         message.author.id === client.user.id &&
-        message.embeds.some((embed) => embed.footer?.text === expectedFooter),
+        message.embeds.some(
+          (embed) =>
+            embed.title === `Mafia ${mafia.name}` &&
+            expectedFooters.has(embed.footer?.text),
+        ),
     );
     if (match) return match;
     if (messages.size === 0 || messages.size < 100) return null;
@@ -752,6 +758,37 @@ async function findMafiaPublicationMessage(channel, mafia) {
     if (!before) return null;
   }
   return null;
+}
+
+async function getPendingMafiaLocations(channel, excludedMessageId) {
+  const maxScannedMessages = 5000;
+  const locations = new Set();
+  let scanned = 0;
+  let before;
+  while (scanned < maxScannedMessages) {
+    const messages = await channel.messages.fetch({
+      limit: Math.min(100, maxScannedMessages - scanned),
+      ...(before ? { before } : {}),
+    });
+    for (const message of messages.values()) {
+      if (
+        message.id === excludedMessageId ||
+        message.author.id !== client.user.id ||
+        getEmbedField(message.embeds[0], "Status") !== "Oczekuje na decyzję personelu"
+      ) {
+        continue;
+      }
+      const location = Number(getEmbedField(message.embeds[0], "Lokalizacja na mapie"));
+      if (Number.isInteger(location) && location >= 1 && location <= 9) {
+        locations.add(location);
+      }
+    }
+    if (messages.size === 0 || messages.size < 100) return locations;
+    scanned += messages.size;
+    before = messages.last()?.id;
+    if (!before) return locations;
+  }
+  throw new Error("Nie można sprawdzić, czy lokalizacja mafii jest już zajęta — kanał zawiera więcej niż 5000 wiadomości.");
 }
 
 function makeMafiaReviewRow(disabled = false) {
@@ -1641,7 +1678,6 @@ async function handleCommand(interaction) {
       await interaction.reply({ content: `Tej komendy użyj na kanale panelu mafii <#${config.panelChannelId}>.`, ephemeral: true });
       return;
     }
-    const number = interaction.options.getInteger("numer", true);
     const name = interaction.options.getString("nazwa", true).trim();
     const color = interaction.options.getString("kolor", true).trim();
     const location = interaction.options.getInteger("lokalizacja", true);
@@ -1659,7 +1695,6 @@ async function handleCommand(interaction) {
     }
     const mafia = {
       guildId: interaction.guildId,
-      number,
       name,
       color,
       location,
@@ -1671,11 +1706,18 @@ async function handleCommand(interaction) {
     };
     const pendingUpdate = mafiaUpdateQueue.catch(() => {}).then(async () => {
       const mafias = await readMafiaRecords();
-      if (mafias.some((mafia) => mafia.guildId === interaction.guildId && mafia.number === number)) {
-        return "Ten numer mafii jest już zajęty.";
+      if (mafias.some((record) => record.guildId === interaction.guildId && record.location === location)) {
+        return "Ta lokalizacja jest już zajęta przez inną mafię.";
       }
       if (mafias.some((mafia) => mafia.guildId === interaction.guildId && mafia.color.trim().toLocaleLowerCase("pl") === color.toLocaleLowerCase("pl"))) {
         return "Ten kolor mafii jest już zajęty.";
+      }
+      const requestsChannel = await interaction.guild.channels.fetch(config.requestsChannelId);
+      if (!requestsChannel || requestsChannel.type !== ChannelType.GuildText) {
+        throw new Error("Nie mogę znaleźć kanału zgłoszeń mafii.");
+      }
+      if ((await getPendingMafiaLocations(requestsChannel)).has(location)) {
+        return "Ta lokalizacja jest już zajęta przez zgłoszenie oczekujące na rozpatrzenie.";
       }
       const publication = await publicationChannel.send({
         embeds: [buildMafiaEmbed(mafia)],
@@ -2965,7 +3007,6 @@ async function handleMafiaDecision(interaction, approve) {
     if (approve) {
       const ownerId = getEmbedField(embed, "Właściciel").match(/^<@!?(\d+)>$/)?.[1];
       const coOwnerId = getEmbedField(embed, "Współwłaściciel").match(/^<@!?(\d+)>$/)?.[1];
-      const number = Number(getEmbedField(embed, "Numer"));
       const memberCount = Number(getEmbedField(embed, "Liczba osób"));
       const location = Number(getEmbedField(embed, "Lokalizacja na mapie"));
       const name = getEmbedField(embed, "Nazwa");
@@ -2973,8 +3014,6 @@ async function handleMafiaDecision(interaction, approve) {
       if (
         !ownerId ||
         !coOwnerId ||
-        !Number.isSafeInteger(number) ||
-        number < 1 ||
         !Number.isSafeInteger(memberCount) ||
         memberCount < 1 ||
         !Number.isInteger(location) ||
@@ -2988,7 +3027,6 @@ async function handleMafiaDecision(interaction, approve) {
 
       const mafia = {
         guildId: interaction.guildId,
-        number,
         name,
         color,
         location,
@@ -3003,8 +3041,11 @@ async function handleMafiaDecision(interaction, approve) {
         const records = await readMafiaRecords();
         const existingRequest = records.find((record) => record.requestMessageId === mafia.requestMessageId);
         if (existingRequest) return null;
-        if (records.some((record) => record.guildId === mafia.guildId && record.number === mafia.number)) {
-          return "Ten numer mafii jest już zajęty.";
+        if (records.some((record) => record.guildId === mafia.guildId && record.location === mafia.location)) {
+          return "Ta lokalizacja jest już zajęta przez inną mafię.";
+        }
+        if ((await getPendingMafiaLocations(interaction.channel, mafia.requestMessageId)).has(mafia.location)) {
+          return "Ta lokalizacja jest już zajęta przez inne zgłoszenie.";
         }
         if (records.some((record) => record.guildId === mafia.guildId && record.color.trim().toLocaleLowerCase("pl") === mafia.color.toLocaleLowerCase("pl"))) {
           return "Ten kolor mafii jest już zajęty.";
@@ -3068,7 +3109,6 @@ async function handleButton(interaction) {
     }
     const modal = new ModalBuilder().setCustomId("mafia:details").setTitle("Dane nowej mafii");
     const fields = [
-      ["number", "Numer mafii", "Wpisz unikalny numer", TextInputStyle.Short],
       ["name", "Nazwa mafii", "Wpisz nazwę", TextInputStyle.Short],
       ["color", "Kolor mafii", "Wpisz unikalny kolor", TextInputStyle.Short],
       ["member-count", "Liczba osób w mafii", "Wpisz liczbę osób", TextInputStyle.Short],
@@ -3797,32 +3837,41 @@ async function finalizeMafiaRequest(interaction, sessionKey, mafia) {
   mafia.finalizing = true;
   try {
     await interaction.deferUpdate();
-    const records = await readMafiaRecords();
-    if (records.some((record) => record.guildId === mafia.guildId && record.number === mafia.number)) {
-      mafiaCreationSessions.delete(sessionKey);
-      await interaction.editReply({ content: "Ten numer mafii jest już zajęty. Wypełnij zgłoszenie ponownie z nowym numerem.", components: [] });
-      return;
-    }
-    if (records.some((record) => record.guildId === mafia.guildId && record.color.trim().toLocaleLowerCase("pl") === mafia.color.toLocaleLowerCase("pl"))) {
-      mafiaCreationSessions.delete(sessionKey);
-      await interaction.editReply({ content: "Ten kolor mafii jest już zajęty. Wypełnij zgłoszenie ponownie z nowym kolorem.", components: [] });
-      return;
-    }
     const config = webhookConfigs[interaction.guildId]?.mafiaConfig;
     if (!config) throw new Error("Panel mafii nie jest już skonfigurowany. Poproś administratora o ponowne uruchomienie `/setup mafie`.");
-    const requestsChannel = await interaction.guild.channels.fetch(config.requestsChannelId);
-    if (!requestsChannel || requestsChannel.type !== ChannelType.GuildText) {
-      throw new Error("Nie mogę znaleźć kanału zgłoszeń mafii.");
-    }
-    await requestsChannel.send({
-      embeds: [buildMafiaEmbed(mafia, "Oczekuje na decyzję personelu")],
-      files: [new AttachmentBuilder(mafiaMapPath, { name: mafiaMapFileName })],
-      components: [makeMafiaReviewRow()],
-      allowedMentions: { parse: [] },
+    const pendingUpdate = mafiaUpdateQueue.catch(() => {}).then(async () => {
+      const records = await readMafiaRecords();
+      if (records.some((record) => record.guildId === mafia.guildId && record.location === mafia.location)) {
+        return "Ta lokalizacja jest już zajęta przez inną mafię.";
+      }
+      if (records.some((record) => record.guildId === mafia.guildId && record.color.trim().toLocaleLowerCase("pl") === mafia.color.toLocaleLowerCase("pl"))) {
+        return "Ten kolor mafii jest już zajęty.";
+      }
+      const requestsChannel = await interaction.guild.channels.fetch(config.requestsChannelId);
+      if (!requestsChannel || requestsChannel.type !== ChannelType.GuildText) {
+        throw new Error("Nie mogę znaleźć kanału zgłoszeń mafii.");
+      }
+      if ((await getPendingMafiaLocations(requestsChannel)).has(mafia.location)) {
+        return "Ta lokalizacja jest już zajęta przez zgłoszenie oczekujące na rozpatrzenie.";
+      }
+      await requestsChannel.send({
+        embeds: [buildMafiaEmbed(mafia, "Oczekuje na decyzję personelu")],
+        files: [new AttachmentBuilder(mafiaMapPath, { name: mafiaMapFileName })],
+        components: [makeMafiaReviewRow()],
+        allowedMentions: { parse: [] },
+      });
+      return requestsChannel;
     });
+    mafiaUpdateQueue = pendingUpdate;
+    const result = await pendingUpdate;
+    if (typeof result === "string") {
+      mafiaCreationSessions.delete(sessionKey);
+      await interaction.editReply({ content: result, components: [] });
+      return;
+    }
     mafiaCreationSessions.delete(sessionKey);
     await interaction.editReply({
-      content: `Zgłoszenie mafii **${mafia.name}** wysłano do rozpatrzenia na ${requestsChannel}.`,
+      content: `Zgłoszenie mafii **${mafia.name}** wysłano do rozpatrzenia na ${result}.`,
       components: [],
     });
   } catch (error) {
@@ -3838,17 +3887,13 @@ async function handleModal(interaction) {
       await interaction.reply({ content: "Formularz musi zostać wysłany na kanale rejestracji mafii.", ephemeral: true });
       return;
     }
-    const numberRaw = interaction.fields.getTextInputValue("number").trim();
     const memberCountRaw = interaction.fields.getTextInputValue("member-count").trim();
     if (
-      !/^\d+$/.test(numberRaw) ||
-      !Number.isSafeInteger(Number(numberRaw)) ||
-      Number(numberRaw) < 1 ||
       !/^\d+$/.test(memberCountRaw) ||
       !Number.isSafeInteger(Number(memberCountRaw)) ||
       Number(memberCountRaw) < 1
     ) {
-      await interaction.reply({ content: "Numer mafii i liczba osób muszą być dodatnimi liczbami całkowitymi.", ephemeral: true });
+      await interaction.reply({ content: "Liczba osób musi być dodatnią liczbą całkowitą.", ephemeral: true });
       return;
     }
     const name = interaction.fields.getTextInputValue("name").trim();
@@ -3857,10 +3902,27 @@ async function handleModal(interaction) {
       await interaction.reply({ content: "Nazwa i kolor nie mogą być puste.", ephemeral: true });
       return;
     }
+    const records = await readMafiaRecords();
+    const requestsChannel = await interaction.guild.channels.fetch(config.requestsChannelId);
+    if (!requestsChannel || requestsChannel.type !== ChannelType.GuildText) {
+      throw new Error("Nie mogę znaleźć kanału zgłoszeń mafii.");
+    }
+    const pendingLocations = await getPendingMafiaLocations(requestsChannel);
+    const occupiedLocations = new Set([
+      ...records
+        .filter((record) => record.guildId === interaction.guildId)
+        .map((record) => record.location),
+      ...pendingLocations,
+    ]);
+    const availableLocations = Array.from({ length: 9 }, (_, index) => index + 1)
+      .filter((location) => !occupiedLocations.has(location));
+    if (availableLocations.length === 0) {
+      await interaction.reply({ content: "Wszystkie lokalizacje na mapie są już zajęte.", ephemeral: true });
+      return;
+    }
     const sessionKey = `${interaction.guildId}:${interaction.user.id}`;
     mafiaCreationSessions.set(sessionKey, {
       guildId: interaction.guildId,
-      number: Number(numberRaw),
       name,
       color,
       memberCount: Number(memberCountRaw),
@@ -3874,9 +3936,9 @@ async function handleModal(interaction) {
       new StringSelectMenuBuilder()
         .setCustomId("mafia:location")
         .setPlaceholder("Wybierz lokalizację z mapy")
-        .addOptions(Array.from({ length: 9 }, (_, index) => ({
-          label: `Lokalizacja ${index + 1}`,
-          value: String(index + 1),
+        .addOptions(availableLocations.map((location) => ({
+          label: `Lokalizacja ${location}`,
+          value: String(location),
         }))),
     );
     await interaction.reply({

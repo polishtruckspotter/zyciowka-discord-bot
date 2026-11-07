@@ -132,9 +132,6 @@ const mafiaRegistrationCommand = new SlashCommandBuilder()
     subcommand
       .setName("mafie")
       .setDescription("Rejestruje nową mafię na serwerze.")
-      .addIntegerOption((option) =>
-        option.setName("numer").setDescription("Unikalny numer mafii.").setMinValue(1).setRequired(true),
-      )
       .addStringOption((option) =>
         option.setName("nazwa").setDescription("Nazwa mafii.").setMinLength(1).setMaxLength(100).setRequired(true),
       )
