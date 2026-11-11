@@ -109,6 +109,8 @@ const robberyCooldownMs = 5 * 60 * 1000;
 const maxGamblingBet = 3000;
 let activityCheckUpdateQueue = Promise.resolve();
 let economyUpdateQueue = Promise.resolve();
+let webhookConfigUpdateQueue = Promise.resolve();
+const memberCounterQueues = new Map();
 let weaponPermitIdentityRequests = {};
 let webhookConfigs = {};
 let economyData = {};
@@ -621,18 +623,66 @@ async function loadWebhookConfigs() {
 }
 
 async function updateWebhookConfig(guildId, updates) {
-  const next = {
-    ...webhookConfigs,
-    [guildId]: {
-      ...webhookConfigs[guildId],
-      ...updates,
-    },
+  const writeUpdate = async () => {
+    const next = {
+      ...webhookConfigs,
+      [guildId]: {
+        ...webhookConfigs[guildId],
+        ...updates,
+      },
+    };
+    await fs.mkdir(path.dirname(webhookConfigPath), { recursive: true });
+    const temporaryPath = `${webhookConfigPath}.${process.pid}.tmp`;
+    await fs.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    await fs.rename(temporaryPath, webhookConfigPath);
+    webhookConfigs = next;
   };
-  await fs.mkdir(path.dirname(webhookConfigPath), { recursive: true });
-  const temporaryPath = `${webhookConfigPath}.${process.pid}.tmp`;
-  await fs.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-  await fs.rename(temporaryPath, webhookConfigPath);
-  webhookConfigs = next;
+  const pendingUpdate = webhookConfigUpdateQueue.then(writeUpdate, writeUpdate);
+  webhookConfigUpdateQueue = pendingUpdate.then(
+    () => undefined,
+    () => undefined,
+  );
+  await pendingUpdate;
+}
+
+async function updateMemberCounter(member, change, channelConfigKey) {
+  const guildId = member.guild.id;
+  const updateCount = async () => {
+    const savedCount = webhookConfigs[guildId]?.memberCount;
+    const currentCount = savedCount === undefined ? 129 : savedCount;
+    if (!Number.isSafeInteger(currentCount) || currentCount < 0) {
+      throw new Error(`Nieprawidłowy licznik członków serwera ${guildId}: ${currentCount}.`);
+    }
+
+    const memberCount = Math.max(0, currentCount + change);
+    await updateWebhookConfig(guildId, { memberCount });
+
+    const channelId = webhookConfigs[guildId]?.[channelConfigKey];
+    if (!channelId) return;
+    const channel = await member.guild.channels.fetch(channelId);
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      throw new Error(`Skonfigurowany kanał ${channelId} nie istnieje albo nie jest tekstowy.`);
+    }
+
+    const content = change > 0
+      ? `👋 Witamy <@${member.id}> na serwerze **${member.guild.name}**! Jesteś naszym **${memberCount}.** członkiem.`
+      : `👋 Żegnaj <@${member.id}>! Dziękujemy za wspólnie spędzony czas na **${member.guild.name}**. Zostało nas **${memberCount}**.`;
+    await channel.send({
+      content,
+      allowedMentions: { parse: [], users: [member.id] },
+    });
+  };
+
+  const previousUpdate = memberCounterQueues.get(guildId) ?? Promise.resolve();
+  const pendingUpdate = previousUpdate.then(updateCount, updateCount);
+  memberCounterQueues.set(guildId, pendingUpdate);
+  try {
+    await pendingUpdate;
+  } finally {
+    if (memberCounterQueues.get(guildId) === pendingUpdate) {
+      memberCounterQueues.delete(guildId);
+    }
+  }
 }
 
 async function loadWeaponPermitIdentityRequests() {
@@ -1283,6 +1333,29 @@ async function findUserRecordMessages(channel, userId, recordType) {
 }
 
 async function handleCommand(interaction) {
+  if (interaction.commandName === "setup") {
+    const subcommand = interaction.options.getSubcommand(true);
+    const channel = interaction.options.getChannel("kanal", true);
+    const botMember = await interaction.guild.members.fetchMe();
+    if (!botMember.permissionsIn(channel).has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
+      await interaction.reply({
+        content: `Bot potrzebuje uprawnień Wyświetlanie kanału i Wysyłanie wiadomości na ${channel}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const isWelcome = subcommand === "welcome";
+    await updateWebhookConfig(interaction.guildId, {
+      [isWelcome ? "welcomeChannelId" : "byeChannelId"]: channel.id,
+    });
+    await interaction.reply({
+      content: `Kanał ${isWelcome ? "powitań" : "pożegnań"} ustawiono na ${channel}.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
   if (interaction.commandName === "informacja") {
     if (interaction.options.getSubcommand() === "ekonomia") {
       const embed = new EmbedBuilder()
@@ -3625,13 +3698,35 @@ client.on("messageCreate", (message) => {
 });
 
 client.on("guildMemberAdd", (member) => {
-  if (!member.user.bot || member.id === client.user?.id) return;
+  if (!member.user.bot) {
+    updateMemberCounter(
+      member,
+      1,
+      "welcomeChannelId",
+    ).catch((error) => {
+      console.error(`Nie udało się zaktualizować licznika ani wysłać powitania dla ${member.id} na serwerze ${member.guild.id}:`, error);
+    });
+    return;
+  }
+  if (member.id === client.user?.id) return;
 
   member.kick("Automatyczne usuwanie botów z serwera.").catch((error) => {
     console.error(
       `Nie udało się wyrzucić bota ${member.user.tag} (${member.id}) z serwera ${member.guild.name} (${member.guild.id}):`,
       error,
     );
+  });
+});
+
+client.on("guildMemberRemove", (member) => {
+  if (member.user.bot) return;
+
+  updateMemberCounter(
+    member,
+    -1,
+    "byeChannelId",
+  ).catch((error) => {
+    console.error(`Nie udało się zaktualizować licznika ani wysłać pożegnania dla ${member.id} na serwerze ${member.guild.id}:`, error);
   });
 });
 

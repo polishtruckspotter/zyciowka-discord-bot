@@ -162,7 +162,37 @@ const findRecordCommand = new SlashCommandBuilder()
       ),
   );
 
+const setupCommand = new SlashCommandBuilder()
+  .setName("setup")
+  .setDescription("Konfiguruje kanały powitań i pożegnań.")
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("welcome")
+      .setDescription("Ustawia kanał powitań nowych członków.")
+      .addChannelOption((option) =>
+        option
+          .setName("kanal")
+          .setDescription("Kanał, na którym bot będzie witać nowych członków.")
+          .addChannelTypes(ChannelType.GuildText)
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("bye")
+      .setDescription("Ustawia kanał pożegnań odchodzących członków.")
+      .addChannelOption((option) =>
+        option
+          .setName("kanal")
+          .setDescription("Kanał, na którym bot będzie żegnać odchodzących członków.")
+          .addChannelTypes(ChannelType.GuildText)
+          .setRequired(true),
+      ),
+  )
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
+
 const commands = [
+  setupCommand,
   activityCheckCommand,
   botKickCommand,
   vehicleRegistrationCommand,

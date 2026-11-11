@@ -145,7 +145,9 @@ const maxGamblingBet = 3000;
 let activityCheckUpdateQueue = Promise.resolve();
 let economyUpdateQueue = Promise.resolve();
 let mafiaUpdateQueue = Promise.resolve();
+let webhookConfigUpdateQueue = Promise.resolve();
 const mafiaCreationSessions = new Map();
+const memberCounterQueues = new Map();
 let weaponPermitIdentityRequests = {};
 let webhookConfigs = {};
 let economyData = {};
@@ -658,18 +660,66 @@ async function loadWebhookConfigs() {
 }
 
 async function updateWebhookConfig(guildId, updates) {
-  const next = {
-    ...webhookConfigs,
-    [guildId]: {
-      ...webhookConfigs[guildId],
-      ...updates,
-    },
+  const writeUpdate = async () => {
+    const next = {
+      ...webhookConfigs,
+      [guildId]: {
+        ...webhookConfigs[guildId],
+        ...updates,
+      },
+    };
+    await fs.mkdir(path.dirname(webhookConfigPath), { recursive: true });
+    const temporaryPath = `${webhookConfigPath}.${process.pid}.tmp`;
+    await fs.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    await fs.rename(temporaryPath, webhookConfigPath);
+    webhookConfigs = next;
   };
-  await fs.mkdir(path.dirname(webhookConfigPath), { recursive: true });
-  const temporaryPath = `${webhookConfigPath}.${process.pid}.tmp`;
-  await fs.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-  await fs.rename(temporaryPath, webhookConfigPath);
-  webhookConfigs = next;
+  const pendingUpdate = webhookConfigUpdateQueue.then(writeUpdate, writeUpdate);
+  webhookConfigUpdateQueue = pendingUpdate.then(
+    () => undefined,
+    () => undefined,
+  );
+  await pendingUpdate;
+}
+
+async function updateMemberCounter(member, change, channelConfigKey) {
+  const guildId = member.guild.id;
+  const updateCount = async () => {
+    const savedCount = webhookConfigs[guildId]?.memberCount;
+    const currentCount = savedCount === undefined ? 129 : savedCount;
+    if (!Number.isSafeInteger(currentCount) || currentCount < 0) {
+      throw new Error(`Nieprawidłowy licznik członków serwera ${guildId}: ${currentCount}.`);
+    }
+
+    const memberCount = Math.max(0, currentCount + change);
+    await updateWebhookConfig(guildId, { memberCount });
+
+    const channelId = webhookConfigs[guildId]?.[channelConfigKey];
+    if (!channelId) return;
+    const channel = await member.guild.channels.fetch(channelId);
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      throw new Error(`Skonfigurowany kanał ${channelId} nie istnieje albo nie jest tekstowy.`);
+    }
+
+    const content = change > 0
+      ? `👋 Witamy <@${member.id}> na serwerze **${member.guild.name}**! Jesteś naszym **${memberCount}.** członkiem.`
+      : `👋 Żegnaj <@${member.id}>! Dziękujemy za wspólnie spędzony czas na **${member.guild.name}**. Zostało nas **${memberCount}**.`;
+    await channel.send({
+      content,
+      allowedMentions: { parse: [], users: [member.id] },
+    });
+  };
+
+  const previousUpdate = memberCounterQueues.get(guildId) ?? Promise.resolve();
+  const pendingUpdate = previousUpdate.then(updateCount, updateCount);
+  memberCounterQueues.set(guildId, pendingUpdate);
+  try {
+    await pendingUpdate;
+  } finally {
+    if (memberCounterQueues.get(guildId) === pendingUpdate) {
+      memberCounterQueues.delete(guildId);
+    }
+  }
 }
 
 async function readMafiaRecords() {
@@ -1547,6 +1597,28 @@ async function handleSetupCommand(interaction) {
       .addOptions(ticketCategories.map(({ key, title, description, emoji }) => ({ label: title, value: key, description, emoji })));
     await panelChannel.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
     await interaction.reply({ content: `Panel ticketów opublikowano na ${panelChannel}. Kanały będą tworzone w przypisanych kategoriach, a dostęp otrzyma osoba zgłaszająca i rola ${supportRole}.`, ephemeral: true });
+    return;
+  }
+
+  if (subcommand === "welcome" || subcommand === "bye") {
+    const channel = interaction.options.getChannel("kanal", true);
+    const botMember = await interaction.guild.members.fetchMe();
+    if (!botMember.permissionsIn(channel).has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
+      await interaction.reply({
+        content: `Bot potrzebuje uprawnień Wyświetlanie kanału i Wysyłanie wiadomości na ${channel}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const isWelcome = subcommand === "welcome";
+    await updateWebhookConfig(interaction.guildId, {
+      [isWelcome ? "welcomeChannelId" : "byeChannelId"]: channel.id,
+    });
+    await interaction.reply({
+      content: `Kanał ${isWelcome ? "powitań" : "pożegnań"} ustawiono na ${channel}.`,
+      ephemeral: true,
+    });
     return;
   }
 
@@ -2774,6 +2846,92 @@ function recruitmentPrompt(index) {
   return `${section}**Pytanie ${index + 1}/${recruitmentQuestions.length}:** ${item.question}\n\nOdpowiedz na tę wiadomość. Wpisz „anuluj”, aby przerwać podanie.`;
 }
 
+function getRecruitmentStyleIndicator(answers) {
+  const signals = [];
+  let score = 0;
+  const normalizedAnswers = answers.map((answer) => answer.toLocaleLowerCase("pl"));
+  const templatePhrases = [
+    "jako model językowy",
+    "warto zauważyć",
+    "należy podkreślić",
+    "należy pamiętać",
+    "w dzisiejszych czasach",
+    "podsumowując",
+    "w związku z powyższym",
+    "kluczowe jest",
+    "co więcej",
+    "ponadto",
+  ];
+  const foundPhrases = templatePhrases.filter((phrase) =>
+    normalizedAnswers.some((answer) => answer.includes(phrase)),
+  );
+  if (foundPhrases.length) {
+    score += Math.min(foundPhrases.length * 10, 40);
+    signals.push(`gotowe zwroty: ${foundPhrases.join(", ")}`);
+  }
+
+  const openings = normalizedAnswers
+    .filter((answer) => answer.length >= 40)
+    .map((answer) => answer.split(/\s+/).slice(0, 4).join(" "));
+  if (new Set(openings).size < openings.length) {
+    score += 20;
+    signals.push("powtarzający się początek odpowiedzi");
+  }
+
+  const substantiveLengths = answers.map((answer) => answer.length).filter((length) => length >= 40);
+  if (substantiveLengths.length >= 6) {
+    const average = substantiveLengths.reduce((sum, length) => sum + length, 0) / substantiveLengths.length;
+    const variance = substantiveLengths.reduce((sum, length) => sum + (length - average) ** 2, 0) /
+      substantiveLengths.length;
+    if (Math.sqrt(variance) / average <= 0.15) {
+      score += 10;
+      signals.push("bardzo podobna długość odpowiedzi");
+    }
+  }
+
+  return {
+    score: Math.min(score, 100),
+    signals,
+  };
+}
+
+function buildRecruitmentSummaryEmbed(session, applicant) {
+  const answerExcerpt = (index, maxLength = 220) => {
+    const answer = session.answers[index]?.replace(/\s+/g, " ").trim();
+    return answer
+      ? answer.length > maxLength ? `${answer.slice(0, maxLength - 1)}…` : answer
+      : "Brak odpowiedzi";
+  };
+  const { score, signals } = getRecruitmentStyleIndicator(session.answers);
+  const scoreDescription = signals.length
+    ? signals.map((signal) => `• ${signal}`).join("\n")
+    : "Nie znaleziono sygnałów z krótkiej listy heurystycznej.";
+  const summary = new EmbedBuilder()
+    .setColor(0xe0a12f)
+    .setTitle("Podsumowanie podania dla personelu")
+    .setDescription([
+      `**Kandydat:** <@${applicant.id}> (${applicant.tag})`,
+      `**Wiek:** ${answerExcerpt(1, 80)}`,
+      `**Dostępność:** ${answerExcerpt(2)}`,
+      `**Motywacja:** ${answerExcerpt(3)}`,
+      `**Doświadczenie:** ${answerExcerpt(4)}`,
+      `**Reakcja na złamanie zasad:** ${answerExcerpt(14)}`,
+    ].join("\n\n"))
+    .addFields(
+      {
+        name: `Sygnały stylu AI (heurystycznie): ${score}/100`,
+        value: scoreDescription,
+      },
+      {
+        name: "Ważne",
+        value: "To nie jest wykrywacz AI ani prawdopodobieństwo autorstwa. Wskaźnik opiera się wyłącznie na prostych wzorcach tekstu, może się mylić i nie powinien być podstawą decyzji. Przeczytaj pełne odpowiedzi i porozmawiaj z kandydatem.",
+      },
+    )
+    .setFooter({ text: `recruitment-application:${session.guildId}:${applicant.id}:pending` })
+    .setTimestamp();
+  return summary;
+}
+
 async function handleTicketSelect(interaction) {
   const config = webhookConfigs[interaction.guildId]?.ticketsConfig;
   const category = ticketCategories.find((item) => item.key === interaction.values[0]);
@@ -2896,9 +3054,6 @@ async function handleRecruitmentAnswer(message) {
       .setDescription(`Kandydat: <@${message.author.id}> (${message.author.tag})`)
       .addFields(fields)
       .setTimestamp();
-    if (page === 0) {
-      embed.setFooter({ text: `recruitment-application:${session.guildId}:${message.author.id}:pending` });
-    }
     embeds.push(embed);
   }
   const decisionRow = new ActionRowBuilder().addComponents(
@@ -2911,10 +3066,10 @@ async function handleRecruitmentAnswer(message) {
   };
   await destination.send({
     ...reviewHeader,
-    embeds: [embeds[0]],
+    embeds: [buildRecruitmentSummaryEmbed(session, message.author)],
     components: [decisionRow],
   });
-  for (const embed of embeds.slice(1)) {
+  for (const embed of embeds) {
     await destination.send({ embeds: [embed], allowedMentions: { parse: [] } });
   }
   await message.author.send("Dziękujemy! Twoje podanie zostało wysłane do zespołu rekrutacji.");
@@ -4625,13 +4780,35 @@ client.on("messageCreate", (message) => {
 });
 
 client.on("guildMemberAdd", (member) => {
-  if (!member.user.bot || member.id === client.user?.id) return;
+  if (!member.user.bot) {
+    updateMemberCounter(
+      member,
+      1,
+      "welcomeChannelId",
+    ).catch((error) => {
+      console.error(`Nie udało się zaktualizować licznika ani wysłać powitania dla ${member.id} na serwerze ${member.guild.id}:`, error);
+    });
+    return;
+  }
+  if (member.id === client.user?.id) return;
 
   member.kick("Automatyczne usuwanie botów z serwera.").catch((error) => {
     console.error(
       `Nie udało się wyrzucić bota ${member.user.tag} (${member.id}) z serwera ${member.guild.name} (${member.guild.id}):`,
       error,
     );
+  });
+});
+
+client.on("guildMemberRemove", (member) => {
+  if (member.user.bot) return;
+
+  updateMemberCounter(
+    member,
+    -1,
+    "byeChannelId",
+  ).catch((error) => {
+    console.error(`Nie udało się zaktualizować licznika ani wysłać pożegnania dla ${member.id} na serwerze ${member.guild.id}:`, error);
   });
 });
 
