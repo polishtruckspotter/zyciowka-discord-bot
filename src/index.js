@@ -150,6 +150,7 @@ const activityCheckParticipantsPath = path.join(
   "activity-check-participants.json",
 );
 const yesNoPollsPath = path.join(__dirname, "..", "data", "yes-no-polls.json");
+const yesNoGameSessionsPath = path.join(__dirname, "..", "data", "yes-no-game-sessions.json");
 const economyDataPath = path.join(__dirname, "..", "data", "economy.json");
 const mafiasDataPath = path.join(__dirname, "..", "data", "mafias.json");
 const mafiaMapFileName = "Zrzut_ekranu_2026-10-30_161141.png";
@@ -162,11 +163,13 @@ let activityCheckUpdateQueue = Promise.resolve();
 let economyUpdateQueue = Promise.resolve();
 let mafiaUpdateQueue = Promise.resolve();
 let yesNoPollUpdateQueue = Promise.resolve();
+let yesNoGameUpdateQueue = Promise.resolve();
 const mafiaCreationSessions = new Map();
 let weaponPermitIdentityRequests = {};
 let webhookConfigs = {};
 let economyData = {};
 let yesNoPolls = {};
+let yesNoGameSessions = {};
 
 function getMissingConfiguration(keys) {
   return keys.filter((key) => !process .env[key]);
@@ -965,6 +968,79 @@ function buildYesNoPollButtons(poll) {
       new ButtonBuilder()
         .setCustomId("czy-osoba-ponizej:nie")
         .setLabel(`Nie (${noCount})`)
+        .setStyle(ButtonStyle.Danger),
+    ),
+  ];
+}
+
+async function loadYesNoGameSessions() {
+  try {
+    const contents = await fs.readFile(yesNoGameSessionsPath, "utf8");
+    const parsed = JSON.parse(contents);
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      !Object.values(parsed).every((session) =>
+        session &&
+        typeof session.guildId === "string" &&
+        typeof session.channelId === "string" &&
+        typeof session.askerId === "string" &&
+        typeof session.questionMessageId === "string" &&
+        typeof session.question === "string" &&
+        typeof session.createdAt === "string" &&
+        (session.answer === null || session.answer === "tak" || session.answer === "nie") &&
+        (session.answeredBy === null || typeof session.answeredBy === "string") &&
+        (session.answeredName === null || typeof session.answeredName === "string") &&
+        (session.answeredAvatarURL === null || typeof session.answeredAvatarURL === "string"),
+      )
+    ) {
+      throw new Error("Plik gry „Czy osoba poniżej?” ma nieprawidłowy format.");
+    }
+    yesNoGameSessions = parsed;
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      yesNoGameSessions = {};
+      return;
+    }
+    throw error;
+  }
+}
+
+async function updateYesNoGameSessions(update) {
+  const pendingUpdate = yesNoGameUpdateQueue.catch(() => {}).then(async () => {
+    const next = { ...yesNoGameSessions };
+    const result = await update(next);
+    await fs.mkdir(path.dirname(yesNoGameSessionsPath), { recursive: true });
+    const temporaryPath = `${yesNoGameSessionsPath}.${process.pid}.tmp`;
+    await fs.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    await fs.rename(temporaryPath, yesNoGameSessionsPath);
+    yesNoGameSessions = next;
+    return result;
+  });
+  yesNoGameUpdateQueue = pendingUpdate;
+  return pendingUpdate;
+}
+
+function buildYesNoGameAnswerEmbed(session) {
+  return new EmbedBuilder()
+    .setColor(session.answer === "tak" ? 0x2ecc71 : 0xe74c3c)
+    .setAuthor({ name: session.answeredName, iconURL: session.answeredAvatarURL })
+    .setDescription(`${session.answer === "tak" ? "Tak" : "Nie"} ~ ${session.question}`)
+    .setFooter({ text: "Czy osoba poniżej?" })
+    .setTimestamp();
+}
+
+function buildYesNoGameButtons() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("czy-osoba-ponizej-gra:tak")
+        .setLabel("Tak")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId("czy-osoba-ponizej-gra:nie")
+        .setLabel("Nie")
         .setStyle(ButtonStyle.Danger),
     ),
   ];
@@ -2076,6 +2152,51 @@ async function handleStaffRosterPublish(interaction) {
   await interaction.editReply({ content: `Zestawienie opublikowano na ${destination}.`, components: [] });
 }
 
+async function handleYesNoGameMessage(message) {
+  if (!message.guild || message.author.bot) return;
+  const gameChannelId = webhookConfigs[message.guild.id]?.yesNoGameChannelId;
+  if (message.channelId !== gameChannelId) return;
+
+  const question = message.content.trim();
+  if (!question || question.length > 1000 || !question.includes("?")) {
+    await message.reply({
+      content: "Napisz pytanie, na które można odpowiedzieć „Tak” albo „Nie”, i zakończ je znakiem „?”.",
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
+  const answerPrompt = await message.reply({
+    content: "Odpowiedz Tak albo Nie:",
+    allowedMentions: { parse: [] },
+  });
+  const session = {
+    guildId: message.guild.id,
+    channelId: message.channelId,
+    questionMessageId: message.id,
+    askerId: message.author.id,
+    question,
+    createdAt: new Date().toISOString(),
+    answer: null,
+    answeredBy: null,
+    answeredName: null,
+    answeredAvatarURL: null,
+  };
+
+  try {
+    await updateYesNoGameSessions(async (sessions) => {
+      sessions[answerPrompt.id] = session;
+    });
+  } catch (error) {
+    await answerPrompt.delete().catch((deleteError) => {
+      console.error("Nie udało się usunąć niedziałających przycisków gry:", deleteError);
+    });
+    throw error;
+  }
+
+  await answerPrompt.edit({ components: buildYesNoGameButtons() });
+}
+
 async function handleCommand(interaction) {
   if (interaction.commandName === "czy") {
     if (interaction.user.id !== "1288154813011591270") {
@@ -2094,11 +2215,6 @@ async function handleCommand(interaction) {
     }
 
     const channel = interaction.options.getChannel("kanal", true);
-    const question = interaction.options.getString("pytanie", true).trim();
-    if (!question) {
-      await interaction.reply({ content: "Pytanie nie może być puste.", ephemeral: true });
-      return;
-    }
     if (!channel.isTextBased() || channel.type !== ChannelType.GuildText) {
       await interaction.reply({ content: "Wybierz zwykły kanał tekstowy.", ephemeral: true });
       return;
@@ -2118,32 +2234,10 @@ async function handleCommand(interaction) {
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const poll = {
-      guildId: interaction.guildId,
-      channelId: channel.id,
-      question,
-      createdBy: interaction.user.id,
-      createdAt: new Date().toISOString(),
-      votes: {},
-    };
-    const message = await channel.send({
-      embeds: [buildYesNoPollEmbed(poll)],
-      components: buildYesNoPollButtons(poll),
-      allowedMentions: { parse: [] },
-    });
-
-    try {
-      await updateYesNoPolls(async (polls) => {
-        polls[message.id] = poll;
-      });
-    } catch (error) {
-      await message.edit({ components: [] }).catch((editError) => {
-        console.error("Nie udało się wyłączyć przycisków niezapisanego głosowania:", editError);
-      });
-      throw error;
-    }
-
-    await interaction.editReply(`Głosowanie opublikowano na ${channel}.`);
+    await updateWebhookConfig(interaction.guildId, { yesNoGameChannelId: channel.id });
+    await interaction.editReply(
+      `Kanał gry „Czy osoba poniżej?” ustawiono na ${channel}. Gracze mogą tam wysyłać pytania kończące się znakiem „?”.`,
+    );
     return;
   }
 
@@ -3779,6 +3873,78 @@ async function handleMafiaDecision(interaction, approve) {
 
 async function handleButton(interaction) {
   if (
+    interaction.customId === "czy-osoba-ponizej-gra:tak" ||
+    interaction.customId === "czy-osoba-ponizej-gra:nie"
+  ) {
+    const session = yesNoGameSessions[interaction.message.id];
+    if (
+      !session ||
+      session.guildId !== interaction.guildId ||
+      session.channelId !== interaction.channelId ||
+      interaction.message.author.id !== client.user.id ||
+      interaction.message.content !== "Odpowiedz Tak albo Nie:"
+    ) {
+      await interaction.reply({
+        content: "To pytanie jest niedostępne albo nie należy do tej gry.",
+        ephemeral: true,
+      });
+      return;
+    }
+    if (session.askerId === interaction.user.id) {
+      await interaction.reply({
+        content: "Nie możesz odpowiedzieć na własne pytanie.",
+        ephemeral: true,
+      });
+      return;
+    }
+    if (session.answer) {
+      await interaction.reply({
+        content: "Ktoś już odpowiedział na to pytanie.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const answer = interaction.customId.endsWith(":tak") ? "tak" : "nie";
+    const result = await updateYesNoGameSessions(async (sessions) => {
+      const current = sessions[interaction.message.id];
+      if (!current) {
+        throw new Error("Nie znaleziono zapisanej sesji tej gry.");
+      }
+      if (current.answer) {
+        return { alreadyAnswered: true };
+      }
+      const updated = {
+        ...current,
+        answer,
+        answeredBy: interaction.user.id,
+        answeredName: member.displayName,
+        answeredAvatarURL: interaction.user.displayAvatarURL({ size: 128 }),
+      };
+      sessions[interaction.message.id] = updated;
+      return { alreadyAnswered: false, session: updated };
+    });
+    if (result.alreadyAnswered) {
+      await interaction.editReply("Ktoś już odpowiedział na to pytanie.");
+      return;
+    }
+
+    await interaction.message.edit({
+      content: `Odpowiedź: ${answer === "tak" ? "Tak" : "Nie"}`,
+      components: [],
+      allowedMentions: { parse: [] },
+    });
+    await interaction.channel.send({
+      embeds: [buildYesNoGameAnswerEmbed(result.session)],
+      allowedMentions: { parse: [] },
+    });
+    await interaction.editReply("Zapisano Twoją odpowiedź.");
+    return;
+  }
+
+  if (
     interaction.customId === "czy-osoba-ponizej:tak" ||
     interaction.customId === "czy-osoba-ponizej:nie"
   ) {
@@ -5346,6 +5512,9 @@ client.on("messageCreate", (message) => {
     }
     return;
   }
+  handleYesNoGameMessage(message).catch((error) => {
+    console.error("Nie udało się obsłużyć pytania w grze „Czy osoba poniżej?”:", error);
+  });
   handleEconomyCommand(message).catch((error) => {
     console.error("Nie udało się obsłużyć komendy ekonomii:", error);
     message.reply({
@@ -5454,6 +5623,7 @@ if (missing.length) {
     loadWeaponPermitIdentityRequests(),
     loadEconomyData(),
     loadYesNoPolls(),
+    loadYesNoGameSessions(),
   ])
     .then(() => client.login(process.env.DISCORD_TOKEN))
     .catch((error) => {

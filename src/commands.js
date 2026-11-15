@@ -276,30 +276,22 @@ const findRecordCommand = new SlashCommandBuilder()
 
 const yesNoPollCommand = new SlashCommandBuilder()
   .setName("czy")
-  .setDescription("Tworzy pytanie do głosowania Tak/Nie.")
+  .setDescription("Konfiguruje grę „Czy osoba poniżej?”.")
   .addSubcommandGroup((group) =>
     group
       .setName("osoba")
-      .setDescription("Tworzy głosowanie dla graczy.")
+      .setDescription("Zarządza grą „Czy osoba poniżej?”.")
       .addSubcommand((subcommand) =>
         subcommand
           .setName("ponizej")
-          .setDescription("Publikuje pytanie z przyciskami Tak i Nie.")
+          .setDescription("Wybiera kanał do gry.")
           .addChannelOption((option) =>
             option
               .setName("kanal")
-              .setDescription("Kanał, na którym opublikować głosowanie.")
+              .setDescription("Kanał, w którym gracze będą zadawać pytania.")
               .addChannelTypes(ChannelType.GuildText)
               .setRequired(true),
           )
-          .addStringOption((option) =>
-            option
-              .setName("pytanie")
-              .setDescription("Pytanie, na które można odpowiedzieć Tak albo Nie.")
-              .setMinLength(1)
-              .setMaxLength(1000)
-              .setRequired(true),
-          ),
       ),
   );
 
