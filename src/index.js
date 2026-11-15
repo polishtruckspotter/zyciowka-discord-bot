@@ -43,6 +43,7 @@ const waitingRoomPingCooldowns = new Map();
 const recruitmentApplications = new Map();
 const recruitmentDecisionLocks = new Set();
 const staffRosterSetupSessions = new Map();
+const yesNoGamePendingAnswers = new Map();
 const raidJoinTracking = new Map();
 const raidJoinWindowMs = 10 * 1000;
 const raidJoinBurstThreshold = 5;
@@ -1031,6 +1032,15 @@ function buildYesNoGameAnswerEmbed(session) {
     .setTimestamp();
 }
 
+function buildYesNoGameQuestionEmbed(session) {
+  return new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setAuthor({ name: session.askerName, iconURL: session.askerAvatarURL })
+    .setDescription(session.question)
+    .setFooter({ text: "Czy osoba poniżej? • odpowiedz przyciskiem" })
+    .setTimestamp(new Date(session.createdAt));
+}
+
 function buildYesNoGameButtons() {
   return [
     new ActionRowBuilder().addComponents(
@@ -1044,6 +1054,42 @@ function buildYesNoGameButtons() {
         .setStyle(ButtonStyle.Danger),
     ),
   ];
+}
+
+function buildYesNoGameStartPanel() {
+  return {
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle("Czy osoba poniżej?")
+        .setDescription("Kliknij przycisk, wpisz pytanie i rozpocznij grę. Po odpowiedzi Tak/Nie możesz dodać kolejne pytanie.")
+        .setFooter({ text: "Pytania zaczynają się od „Czy osoba poniżej…”" }),
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("czy-osoba-ponizej-gra:start")
+          .setLabel("Zadaj pytanie")
+          .setStyle(ButtonStyle.Primary),
+      ),
+    ],
+    allowedMentions: { parse: [] },
+  };
+}
+
+function buildYesNoGameQuestionModal(customId) {
+  const questionInput = new TextInputBuilder()
+    .setCustomId("question")
+    .setLabel("Twoje pytanie")
+    .setStyle(TextInputStyle.Paragraph)
+    .setMinLength(5)
+    .setMaxLength(1000)
+    .setValue("Czy osoba poniżej ")
+    .setRequired(true);
+  return new ModalBuilder()
+    .setCustomId(customId)
+    .setTitle("Czy osoba poniżej?")
+    .addComponents(new ActionRowBuilder().addComponents(questionInput));
 }
 
 function formatActivityCheckParticipants(participants) {
@@ -2152,29 +2198,30 @@ async function handleStaffRosterPublish(interaction) {
   await interaction.editReply({ content: `Zestawienie opublikowano na ${destination}.`, components: [] });
 }
 
-async function handleYesNoGameMessage(message) {
-  if (!message.guild || message.author.bot) return;
-  const gameChannelId = webhookConfigs[message.guild.id]?.yesNoGameChannelId;
-  if (message.channelId !== gameChannelId) return;
-
-  const question = message.content.trim();
-  if (!question || question.length > 1000 || !question.includes("?")) {
-    await message.reply({
-      content: "Napisz pytanie, na które można odpowiedzieć „Tak” albo „Nie”, i zakończ je znakiem „?”.",
-      allowedMentions: { parse: [] },
-    });
-    return;
+function normalizeYesNoGameQuestion(value) {
+  let question = value.trim().replace(/\s+/g, " ");
+  const prefix = "Czy osoba poniżej";
+  if (!question.toLocaleLowerCase("pl").startsWith(prefix.toLocaleLowerCase("pl"))) {
+    question = `${prefix} ${question}`;
   }
+  if (!question.endsWith("?")) {
+    question += "?";
+  }
+  if (question.length > 1000) {
+    throw new Error("Pytanie po dodaniu początku „Czy osoba poniżej” może mieć maksymalnie 1 000 znaków.");
+  }
+  return question;
+}
 
-  const answerPrompt = await message.reply({
-    content: "Odpowiedz Tak albo Nie:",
-    allowedMentions: { parse: [] },
-  });
+async function publishYesNoGameQuestion(channel, user, question) {
+  const member = await channel.guild.members.fetch(user.id);
   const session = {
-    guildId: message.guild.id,
-    channelId: message.channelId,
-    questionMessageId: message.id,
-    askerId: message.author.id,
+    guildId: channel.guild.id,
+    channelId: channel.id,
+    questionMessageId: "",
+    askerId: user.id,
+    askerName: member.displayName,
+    askerAvatarURL: user.displayAvatarURL({ size: 128 }),
     question,
     createdAt: new Date().toISOString(),
     answer: null,
@@ -2182,19 +2229,24 @@ async function handleYesNoGameMessage(message) {
     answeredName: null,
     answeredAvatarURL: null,
   };
+  const questionMessage = await channel.send({
+    embeds: [buildYesNoGameQuestionEmbed(session)],
+    components: buildYesNoGameButtons(),
+    allowedMentions: { parse: [] },
+  });
+  session.questionMessageId = questionMessage.id;
 
   try {
     await updateYesNoGameSessions(async (sessions) => {
-      sessions[answerPrompt.id] = session;
+      sessions[questionMessage.id] = session;
     });
   } catch (error) {
-    await answerPrompt.delete().catch((deleteError) => {
-      console.error("Nie udało się usunąć niedziałających przycisków gry:", deleteError);
+    await questionMessage.edit({ components: [] }).catch((editError) => {
+      console.error("Nie udało się wyłączyć przycisków niezapisanego pytania:", editError);
     });
     throw error;
   }
-
-  await answerPrompt.edit({ components: buildYesNoGameButtons() });
+  return session;
 }
 
 async function handleCommand(interaction) {
@@ -2234,9 +2286,33 @@ async function handleCommand(interaction) {
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    await updateWebhookConfig(interaction.guildId, { yesNoGameChannelId: channel.id });
+    const previousChannelId = webhookConfigs[interaction.guildId]?.yesNoGameChannelId;
+    const previousPanelId = webhookConfigs[interaction.guildId]?.yesNoGamePanelMessageId;
+    const panel = await channel.send(buildYesNoGameStartPanel());
+    try {
+      await updateWebhookConfig(interaction.guildId, {
+        yesNoGameChannelId: channel.id,
+        yesNoGamePanelMessageId: panel.id,
+      });
+    } catch (error) {
+      await panel.edit({ components: [] }).catch((editError) => {
+        console.error("Nie udało się wyłączyć niezapisanego panelu gry:", editError);
+      });
+      throw error;
+    }
+    if (previousPanelId && previousPanelId !== panel.id) {
+      const previousChannel = previousChannelId
+        ? await interaction.guild.channels.fetch(previousChannelId)
+        : null;
+      if (previousChannel?.isTextBased()) {
+        const previousPanel = await previousChannel.messages.fetch(previousPanelId).catch(() => null);
+        await previousPanel?.edit({ components: [] }).catch((error) => {
+          console.error("Nie udało się wyłączyć poprzedniego panelu gry:", error);
+        });
+      }
+    }
     await interaction.editReply(
-      `Kanał gry „Czy osoba poniżej?” ustawiono na ${channel}. Gracze mogą tam wysyłać pytania kończące się znakiem „?”.`,
+      `Panel gry „Czy osoba poniżej?” opublikowano na ${channel}. Gracze mogą kliknąć „Zadaj pytanie”.`,
     );
     return;
   }
@@ -3872,6 +3948,24 @@ async function handleMafiaDecision(interaction, approve) {
 }
 
 async function handleButton(interaction) {
+  if (interaction.customId === "czy-osoba-ponizej-gra:start") {
+    const config = webhookConfigs[interaction.guildId];
+    if (
+      !config?.yesNoGameChannelId ||
+      interaction.channelId !== config.yesNoGameChannelId ||
+      interaction.message.id !== config.yesNoGamePanelMessageId ||
+      interaction.message.author.id !== client.user.id
+    ) {
+      await interaction.reply({
+        content: "Ten przycisk nie należy do aktywnego panelu gry.",
+        ephemeral: true,
+      });
+      return;
+    }
+    await interaction.showModal(buildYesNoGameQuestionModal("czy-osoba-ponizej-gra-new"));
+    return;
+  }
+
   if (
     interaction.customId === "czy-osoba-ponizej-gra:tak" ||
     interaction.customId === "czy-osoba-ponizej-gra:nie"
@@ -3882,17 +3976,10 @@ async function handleButton(interaction) {
       session.guildId !== interaction.guildId ||
       session.channelId !== interaction.channelId ||
       interaction.message.author.id !== client.user.id ||
-      interaction.message.content !== "Odpowiedz Tak albo Nie:"
+      interaction.message.embeds[0]?.footer?.text !== "Czy osoba poniżej? • odpowiedz przyciskiem"
     ) {
       await interaction.reply({
         content: "To pytanie jest niedostępne albo nie należy do tej gry.",
-        ephemeral: true,
-      });
-      return;
-    }
-    if (session.askerId === interaction.user.id) {
-      await interaction.reply({
-        content: "Nie możesz odpowiedzieć na własne pytanie.",
         ephemeral: true,
       });
       return;
@@ -3904,43 +3991,32 @@ async function handleButton(interaction) {
       });
       return;
     }
-
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const member = await interaction.guild.members.fetch(interaction.user.id);
     const answer = interaction.customId.endsWith(":tak") ? "tak" : "nie";
-    const result = await updateYesNoGameSessions(async (sessions) => {
-      const current = sessions[interaction.message.id];
-      if (!current) {
-        throw new Error("Nie znaleziono zapisanej sesji tej gry.");
-      }
-      if (current.answer) {
-        return { alreadyAnswered: true };
-      }
-      const updated = {
-        ...current,
-        answer,
-        answeredBy: interaction.user.id,
-        answeredName: member.displayName,
-        answeredAvatarURL: interaction.user.displayAvatarURL({ size: 128 }),
-      };
-      sessions[interaction.message.id] = updated;
-      return { alreadyAnswered: false, session: updated };
-    });
-    if (result.alreadyAnswered) {
-      await interaction.editReply("Ktoś już odpowiedział na to pytanie.");
+    const pending = yesNoGamePendingAnswers.get(interaction.message.id);
+    if (
+      pending &&
+      pending.expiresAt > Date.now() &&
+      pending.userId !== interaction.user.id
+    ) {
+      await interaction.reply({
+        content: "Ktoś już wybrał odpowiedź i wypełnia formularz kolejnego pytania.",
+        ephemeral: true,
+      });
       return;
     }
-
-    await interaction.message.edit({
-      content: `Odpowiedź: ${answer === "tak" ? "Tak" : "Nie"}`,
-      components: [],
-      allowedMentions: { parse: [] },
+    yesNoGamePendingAnswers.set(interaction.message.id, {
+      userId: interaction.user.id,
+      answer,
+      expiresAt: Date.now() + 15 * 60 * 1000,
     });
-    await interaction.channel.send({
-      embeds: [buildYesNoGameAnswerEmbed(result.session)],
-      allowedMentions: { parse: [] },
-    });
-    await interaction.editReply("Zapisano Twoją odpowiedź.");
+    try {
+      await interaction.showModal(
+        buildYesNoGameQuestionModal(`czy-osoba-ponizej-gra-next:${interaction.message.id}:${answer}`),
+      );
+    } catch (error) {
+      yesNoGamePendingAnswers.delete(interaction.message.id);
+      throw error;
+    }
     return;
   }
 
@@ -4785,6 +4861,109 @@ async function finalizeMafiaRequest(interaction, sessionKey, mafia) {
 }
 
 async function handleModal(interaction) {
+  if (interaction.customId === "czy-osoba-ponizej-gra-new") {
+    const config = webhookConfigs[interaction.guildId];
+    if (!config?.yesNoGameChannelId || interaction.channelId !== config.yesNoGameChannelId) {
+      await interaction.reply({
+        content: "Kanał gry nie jest już aktywny. Poproś właściciela o ponowne ustawienie komendy.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    let question;
+    try {
+      question = normalizeYesNoGameQuestion(interaction.fields.getTextInputValue("question"));
+    } catch (error) {
+      await interaction.reply({ content: error.message, ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const channel = await interaction.guild.channels.fetch(config.yesNoGameChannelId);
+    if (!channel?.isTextBased() || channel.type !== ChannelType.GuildText) {
+      throw new Error("Kanał gry nie istnieje albo nie jest tekstowy.");
+    }
+    await publishYesNoGameQuestion(channel, interaction.user, question);
+    await interaction.editReply("Twoje pytanie zostało opublikowane.");
+    return;
+  }
+
+  if (interaction.customId.startsWith("czy-osoba-ponizej-gra-next:")) {
+    const [, questionId, answer] = interaction.customId.split(":");
+    const pending = yesNoGamePendingAnswers.get(questionId);
+    if (
+      !questionId ||
+      !["tak", "nie"].includes(answer) ||
+      !pending ||
+      pending.userId !== interaction.user.id ||
+      pending.answer !== answer ||
+      pending.expiresAt <= Date.now()
+    ) {
+      yesNoGamePendingAnswers.delete(questionId);
+      await interaction.reply({
+        content: "Formularz kolejnego pytania wygasł. Kliknij ponownie Tak albo Nie przy aktywnym pytaniu.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    let question;
+    try {
+      question = normalizeYesNoGameQuestion(interaction.fields.getTextInputValue("question"));
+    } catch (error) {
+      await interaction.reply({ content: error.message, ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const answeredAvatarURL = interaction.user.displayAvatarURL({ size: 128 });
+    const result = await updateYesNoGameSessions(async (sessions) => {
+      const current = sessions[questionId];
+      if (!current) {
+        throw new Error("Nie znaleziono zapisanej sesji pytania.");
+      }
+      if (current.answer) {
+        return { alreadyAnswered: true };
+      }
+      const updated = {
+        ...current,
+        answer,
+        answeredBy: interaction.user.id,
+        answeredName: member.displayName,
+        answeredAvatarURL,
+      };
+      sessions[questionId] = updated;
+      return { alreadyAnswered: false, session: updated };
+    });
+    yesNoGamePendingAnswers.delete(questionId);
+    if (result.alreadyAnswered) {
+      await interaction.editReply("Ktoś już odpowiedział na to pytanie.");
+      return;
+    }
+
+    const channel = await interaction.guild.channels.fetch(result.session.channelId);
+    if (!channel?.isTextBased() || channel.type !== ChannelType.GuildText) {
+      throw new Error("Kanał gry nie istnieje albo nie jest tekstowy.");
+    }
+    const answeredQuestion = await channel.messages.fetch(questionId);
+    const questionEmbed = EmbedBuilder.from(answeredQuestion.embeds[0])
+      .setColor(answer === "tak" ? 0x2ecc71 : 0xe74c3c)
+      .setFooter({ text: `Odpowiedział(a): ${member.displayName}` });
+    await answeredQuestion.edit({
+      embeds: [questionEmbed],
+      components: [],
+      allowedMentions: { parse: [] },
+    });
+    await channel.send({
+      embeds: [buildYesNoGameAnswerEmbed(result.session)],
+      allowedMentions: { parse: [] },
+    });
+    await publishYesNoGameQuestion(channel, interaction.user, question);
+    await interaction.editReply("Odpowiedź i kolejne pytanie zostały opublikowane.");
+    return;
+  }
+
   if (interaction.customId === "mafia:details") {
     const config = webhookConfigs[interaction.guildId]?.mafiaConfig;
     if (!config || interaction.channelId !== config.panelChannelId) {
@@ -5512,9 +5691,6 @@ client.on("messageCreate", (message) => {
     }
     return;
   }
-  handleYesNoGameMessage(message).catch((error) => {
-    console.error("Nie udało się obsłużyć pytania w grze „Czy osoba poniżej?”:", error);
-  });
   handleEconomyCommand(message).catch((error) => {
     console.error("Nie udało się obsłużyć komendy ekonomii:", error);
     message.reply({
