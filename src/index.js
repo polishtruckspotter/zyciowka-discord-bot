@@ -149,6 +149,7 @@ const activityCheckParticipantsPath = path.join(
   "data",
   "activity-check-participants.json",
 );
+const yesNoPollsPath = path.join(__dirname, "..", "data", "yes-no-polls.json");
 const economyDataPath = path.join(__dirname, "..", "data", "economy.json");
 const mafiasDataPath = path.join(__dirname, "..", "data", "mafias.json");
 const mafiaMapFileName = "Zrzut_ekranu_2026-10-30_161141.png";
@@ -160,10 +161,12 @@ const maxGamblingBet = 3000;
 let activityCheckUpdateQueue = Promise.resolve();
 let economyUpdateQueue = Promise.resolve();
 let mafiaUpdateQueue = Promise.resolve();
+let yesNoPollUpdateQueue = Promise.resolve();
 const mafiaCreationSessions = new Map();
 let weaponPermitIdentityRequests = {};
 let webhookConfigs = {};
 let economyData = {};
+let yesNoPolls = {};
 
 function getMissingConfiguration(keys) {
   return keys.filter((key) => !process .env[key]);
@@ -885,6 +888,86 @@ async function saveActivityCheckParticipants(participantsByMessage) {
   const temporaryPath = `${activityCheckParticipantsPath}.${process.pid}.tmp`;
   await fs.writeFile(temporaryPath, `${JSON.stringify(participantsByMessage, null, 2)}\n`, "utf8");
   await fs.rename(temporaryPath, activityCheckParticipantsPath);
+}
+
+async function loadYesNoPolls() {
+  try {
+    const contents = await fs.readFile(yesNoPollsPath, "utf8");
+    const parsed = JSON.parse(contents);
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      !Object.values(parsed).every((poll) =>
+        poll &&
+        typeof poll.guildId === "string" &&
+        typeof poll.channelId === "string" &&
+        typeof poll.question === "string" &&
+        typeof poll.createdBy === "string" &&
+        typeof poll.createdAt === "string" &&
+        poll.votes &&
+        typeof poll.votes === "object" &&
+        !Array.isArray(poll.votes) &&
+        Object.values(poll.votes).every((vote) => vote === "tak" || vote === "nie"),
+      )
+    ) {
+      throw new Error("Plik głosowań Tak/Nie ma nieprawidłowy format.");
+    }
+    yesNoPolls = parsed;
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      yesNoPolls = {};
+      return;
+    }
+    throw error;
+  }
+}
+
+async function updateYesNoPolls(update) {
+  const pendingUpdate = yesNoPollUpdateQueue.catch(() => {}).then(async () => {
+    const next = { ...yesNoPolls };
+    const result = await update(next);
+    await fs.mkdir(path.dirname(yesNoPollsPath), { recursive: true });
+    const temporaryPath = `${yesNoPollsPath}.${process.pid}.tmp`;
+    await fs.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    await fs.rename(temporaryPath, yesNoPollsPath);
+    yesNoPolls = next;
+    return result;
+  });
+  yesNoPollUpdateQueue = pendingUpdate;
+  return pendingUpdate;
+}
+
+function buildYesNoPollEmbed(poll) {
+  const votes = Object.values(poll.votes);
+  return new EmbedBuilder()
+    .setColor(0x3498db)
+    .setTitle("Czy osoba poniżej?")
+    .setDescription(`**Pytanie:**\n${poll.question}`)
+    .addFields(
+      { name: "✅ Tak", value: String(votes.filter((vote) => vote === "tak").length), inline: true },
+      { name: "❌ Nie", value: String(votes.filter((vote) => vote === "nie").length), inline: true },
+    )
+    .setFooter({ text: `Głosowanie utworzone przez ${poll.createdBy}` })
+    .setTimestamp(new Date(poll.createdAt));
+}
+
+function buildYesNoPollButtons(poll) {
+  const votes = Object.values(poll.votes);
+  const yesCount = votes.filter((vote) => vote === "tak").length;
+  const noCount = votes.filter((vote) => vote === "nie").length;
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("czy-osoba-ponizej:tak")
+        .setLabel(`Tak (${yesCount})`)
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId("czy-osoba-ponizej:nie")
+        .setLabel(`Nie (${noCount})`)
+        .setStyle(ButtonStyle.Danger),
+    ),
+  ];
 }
 
 function formatActivityCheckParticipants(participants) {
@@ -1994,6 +2077,76 @@ async function handleStaffRosterPublish(interaction) {
 }
 
 async function handleCommand(interaction) {
+  if (interaction.commandName === "czy") {
+    if (interaction.user.id !== "1288154813011591270") {
+      await interaction.reply({
+        content: "Tylko uprawniony użytkownik może użyć tej komendy.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (
+      interaction.options.getSubcommandGroup() !== "osoba" ||
+      interaction.options.getSubcommand() !== "ponizej"
+    ) {
+      return;
+    }
+
+    const channel = interaction.options.getChannel("kanal", true);
+    const question = interaction.options.getString("pytanie", true).trim();
+    if (!question) {
+      await interaction.reply({ content: "Pytanie nie może być puste.", ephemeral: true });
+      return;
+    }
+    if (!channel.isTextBased() || channel.type !== ChannelType.GuildText) {
+      await interaction.reply({ content: "Wybierz zwykły kanał tekstowy.", ephemeral: true });
+      return;
+    }
+
+    const botMember = await interaction.guild.members.fetchMe();
+    const requiredPermissions =
+      PermissionFlagsBits.ViewChannel |
+      PermissionFlagsBits.SendMessages |
+      PermissionFlagsBits.EmbedLinks;
+    if (!botMember.permissionsIn(channel).has(requiredPermissions)) {
+      await interaction.reply({
+        content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${channel}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const poll = {
+      guildId: interaction.guildId,
+      channelId: channel.id,
+      question,
+      createdBy: interaction.user.id,
+      createdAt: new Date().toISOString(),
+      votes: {},
+    };
+    const message = await channel.send({
+      embeds: [buildYesNoPollEmbed(poll)],
+      components: buildYesNoPollButtons(poll),
+      allowedMentions: { parse: [] },
+    });
+
+    try {
+      await updateYesNoPolls(async (polls) => {
+        polls[message.id] = poll;
+      });
+    } catch (error) {
+      await message.edit({ components: [] }).catch((editError) => {
+        console.error("Nie udało się wyłączyć przycisków niezapisanego głosowania:", editError);
+      });
+      throw error;
+    }
+
+    await interaction.editReply(`Głosowanie opublikowano na ${channel}.`);
+    return;
+  }
+
   if (interaction.commandName === "stworz" &&
       interaction.options.getSubcommandGroup() === "nasza" &&
       interaction.options.getSubcommand() === "adm") {
@@ -3625,6 +3778,55 @@ async function handleMafiaDecision(interaction, approve) {
 }
 
 async function handleButton(interaction) {
+  if (
+    interaction.customId === "czy-osoba-ponizej:tak" ||
+    interaction.customId === "czy-osoba-ponizej:nie"
+  ) {
+    const poll = yesNoPolls[interaction.message.id];
+    if (
+      !poll ||
+      poll.guildId !== interaction.guildId ||
+      poll.channelId !== interaction.channelId ||
+      interaction.message.author.id !== client.user.id ||
+      interaction.message.embeds[0]?.title !== "Czy osoba poniżej?"
+    ) {
+      await interaction.reply({
+        content: "To głosowanie jest niedostępne albo nie należy do tego bota.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const vote = interaction.customId.endsWith(":tak") ? "tak" : "nie";
+    const previousVote = await updateYesNoPolls(async (polls) => {
+      const currentPoll = polls[interaction.message.id];
+      if (!currentPoll) {
+        throw new Error("Nie znaleziono zapisanych danych tego głosowania.");
+      }
+      const previous = currentPoll.votes[interaction.user.id];
+      polls[interaction.message.id] = {
+        ...currentPoll,
+        votes: { ...currentPoll.votes, [interaction.user.id]: vote },
+      };
+      return previous;
+    });
+    const updatedPoll = yesNoPolls[interaction.message.id];
+    await interaction.message.edit({
+      embeds: [buildYesNoPollEmbed(updatedPoll)],
+      components: buildYesNoPollButtons(updatedPoll),
+      allowedMentions: { parse: [] },
+    });
+    await interaction.editReply(
+      previousVote === vote
+        ? `Twój głos „${vote}” jest już zapisany.`
+        : previousVote
+          ? `Zmieniono Twój głos na „${vote}”.`
+          : `Zapisano Twój głos: „${vote}”.`,
+    );
+    return;
+  }
+
   if (interaction.customId === "mafia:create") {
     const config = webhookConfigs[interaction.guildId]?.mafiaConfig;
     if (!config || interaction.channelId !== config.panelChannelId) {
@@ -5247,7 +5449,12 @@ if (missing.length) {
   console.error(`Brak wymaganych zmiennych środowiskowych: ${missing.join(", ")}. Skopiuj .env.example do .env i uzupełnij wartości.`);
   process.exitCode = 1;
 } else {
-  Promise.all([loadWebhookConfigs(), loadWeaponPermitIdentityRequests(), loadEconomyData()])
+  Promise.all([
+    loadWebhookConfigs(),
+    loadWeaponPermitIdentityRequests(),
+    loadEconomyData(),
+    loadYesNoPolls(),
+  ])
     .then(() => client.login(process.env.DISCORD_TOKEN))
     .catch((error) => {
       console.error("Nie udało się uruchomić bota lub wczytać konfiguracji:", error);

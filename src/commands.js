@@ -274,9 +274,39 @@ const findRecordCommand = new SlashCommandBuilder()
       ),
   );
 
+const yesNoPollCommand = new SlashCommandBuilder()
+  .setName("czy")
+  .setDescription("Tworzy pytanie do głosowania Tak/Nie.")
+  .addSubcommandGroup((group) =>
+    group
+      .setName("osoba")
+      .setDescription("Tworzy głosowanie dla graczy.")
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("ponizej")
+          .setDescription("Publikuje pytanie z przyciskami Tak i Nie.")
+          .addChannelOption((option) =>
+            option
+              .setName("kanal")
+              .setDescription("Kanał, na którym opublikować głosowanie.")
+              .addChannelTypes(ChannelType.GuildText)
+              .setRequired(true),
+          )
+          .addStringOption((option) =>
+            option
+              .setName("pytanie")
+              .setDescription("Pytanie, na które można odpowiedzieć Tak albo Nie.")
+              .setMinLength(1)
+              .setMaxLength(1000)
+              .setRequired(true),
+          ),
+      ),
+  );
+
 const commands = [
   setupCommand,
   createCommand,
+  yesNoPollCommand,
   activityCheckCommand,
   botKickCommand,
   vehicleRegistrationCommand,
