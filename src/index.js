@@ -51,9 +51,9 @@ const suspiciousAccountAgeMs = 7 * 24 * 60 * 60 * 1000;
 const maxStaffRosterRoles = 40;
 const maxRecruitmentAnswerCharacters = 3500;
 const staffRosterCategories = [
-  { key: "zarzad", title: "Zarząd" },
-  { key: "opiekunowie", title: "Opiekunowie" },
-  { key: "administracja", title: "Administracja" },
+  { key: "zarzad", title: "Zarząd", emoji: "👑" },
+  { key: "opiekunowie", title: "Opiekunowie", emoji: "🛡️" },
+  { key: "administracja", title: "Administracja", emoji: "⚙️" },
 ];
 const ticketCategories = [
   { key: "general", title: "Pytanie / Pomoc Ogólna", description: "Ogólne pytania dotyczące rozgrywki, zasad serwera oraz wątpliwości.", emoji: "❓" },
@@ -1684,38 +1684,38 @@ async function handleSetupCommand(interaction) {
   await interaction.reply({ content: `Panel rekrutacji opublikowano na ${panelChannel}; podania będą wysyłane do prywatnego kanału ${applicationsChannel}.`, ephemeral: true });
 }
 
+function escapeStaffRoleName(name) {
+  return name.replace(/([*_`~|])/g, "\\$1");
+}
+
 function makeStaffRosterSetupEmbed(session, guild) {
-  const lines = session.roles.map((entry, index) => {
-    const roleName = guild.roles.cache.get(entry.roleId)?.name ?? "Rola niedostępna";
-    const category = staffRosterCategories.find(({ key }) => key === entry.categoryKey);
-    return `${index + 1}. ${roleName} — ${category.title}`;
-  });
-  let orderedRoles = "";
-  let omitted = 0;
-  for (let index = 0; index < lines.length; index += 1) {
-    const next = orderedRoles ? `${orderedRoles}\n${lines[index]}` : lines[index];
-    if (next.length > 3500) {
-      omitted = lines.length - index;
-      break;
-    }
-    orderedRoles = next;
-  }
-  if (omitted) orderedRoles += `\n… i jeszcze ${omitted} ról.`;
   const selectedRole = session.selectedRoleId
     ? guild.roles.cache.get(session.selectedRoleId)?.name
     : null;
   const selectedCategory = staffRosterCategories.find(({ key }) => key === session.selectedCategoryKey);
-  const description = [
-    "Dodaj role pojedynczo. Pierwsza dodana rola będzie na samej górze; każda kolejna niżej. Wybierz kategorię dla każdej roli.",
-    `**Dodano:** ${session.roles.length}/${maxStaffRosterRoles}`,
-    selectedRole ? `**Wybrana rola:** ${selectedRole}` : null,
-    selectedCategory ? `**Kategoria:** ${selectedCategory.title}` : null,
-    orderedRoles || "Nie dodano jeszcze ról.",
-  ].filter(Boolean).join("\n\n");
   return new EmbedBuilder()
-    .setColor(0x3498db)
-    .setTitle("Ustaw kolejność ról administracji")
-    .setDescription(description);
+    .setColor(0x5865f2)
+    .setTitle("👥 Skład administracji")
+    .setDescription([
+      `**Krok 1:** wybierz jedną rolę. **Krok 2:** wybierz jej kategorię — rola doda się automatycznie jako pozycja ${session.roles.length + 1}.`,
+      "Pozycja 1 jest najwyżej; każda następna jest niżej. Możesz cofnąć ostatnią pozycję przed publikacją.",
+      `**Postęp:** ${session.roles.length}/${maxStaffRosterRoles} ról`,
+      selectedRole ? `**Wybrana rola:** ${selectedRole}` : null,
+      selectedCategory ? `**Wybrana kategoria:** ${selectedCategory.emoji} ${selectedCategory.title}` : null,
+    ].filter(Boolean).join("\n"))
+    .addFields(staffRosterCategories.map((category) => {
+      const entries = session.roles
+        .map((entry, index) => ({ ...entry, position: index + 1 }))
+        .filter((entry) => entry.categoryKey === category.key);
+      const lines = entries.map((entry) =>
+        `**${String(entry.position).padStart(2, "0")}** · ${escapeStaffRoleName(guild.roles.cache.get(entry.roleId)?.name ?? "Rola niedostępna")}`,
+      );
+      return {
+        name: `${category.emoji} ${category.title} · ${entries.length}`,
+        value: limitRosterField(lines),
+      };
+    }))
+    .setFooter({ text: "Role są wyświetlane w kolejności dodawania: od góry do dołu." });
 }
 
 function makeStaffRosterSetupComponents(userId, session, guild) {
@@ -1725,30 +1725,27 @@ function makeStaffRosterSetupComponents(userId, session, guild) {
   const selectedCategory = staffRosterCategories.find(({ key }) => key === session.selectedCategoryKey);
   const roleMenu = new RoleSelectMenuBuilder()
     .setCustomId(`staff-roster:role:${userId}`)
-    .setPlaceholder(selectedRoleName ? `Wybrano: ${selectedRoleName}` : `Wybierz rolę nr ${session.roles.length + 1}`)
+    .setPlaceholder(selectedRoleName ? `1. Wybrano: ${selectedRoleName}` : `1. Wybierz rolę nr ${session.roles.length + 1}`)
     .setMinValues(1)
-    .setMaxValues(1);
+    .setMaxValues(1)
+    .setDisabled(session.roles.length >= maxStaffRosterRoles);
   const categoryMenu = new StringSelectMenuBuilder()
     .setCustomId(`staff-roster:category:${userId}`)
-    .setPlaceholder(selectedCategory ? `Kategoria: ${selectedCategory.title}` : "Wybierz kategorię tej roli")
-    .addOptions(staffRosterCategories.map(({ key, title }) => ({ label: title, value: key })));
+    .setPlaceholder(selectedCategory ? `Kategoria: ${selectedCategory.title}` : "2. Wybierz kategorię")
+    .addOptions(staffRosterCategories.map(({ key, title, emoji }) => ({ label: title, value: key, emoji })))
+    .setDisabled(session.roles.length >= maxStaffRosterRoles);
   const categoriesComplete = staffRosterCategories.every(({ key }) =>
     session.roles.some((entry) => entry.categoryKey === key),
   );
   const actions = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`staff-roster:add:${userId}`)
-      .setLabel(`Dodaj jako pozycję ${session.roles.length + 1}`)
-      .setStyle(ButtonStyle.Primary)
-      .setDisabled(!session.selectedRoleId || !session.selectedCategoryKey || session.roles.length >= maxStaffRosterRoles),
-    new ButtonBuilder()
       .setCustomId(`staff-roster:undo:${userId}`)
-      .setLabel("Usuń ostatnią rolę")
+      .setLabel("↩ Cofnij ostatnią rolę")
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(session.roles.length === 0),
     new ButtonBuilder()
       .setCustomId(`staff-roster:publish:${userId}`)
-      .setLabel("Opublikuj zestawienie")
+      .setLabel("Opublikuj skład")
       .setStyle(ButtonStyle.Success)
       .setDisabled(!categoriesComplete || Boolean(session.selectedRoleId) || Boolean(session.selectedCategoryKey)),
   );
@@ -1806,6 +1803,22 @@ async function getStaffRosterSetupSession(interaction, ownerId) {
   return session;
 }
 
+function commitStaffRosterSelection(session, guild) {
+  if (!session.selectedRoleId || !session.selectedCategoryKey) return null;
+  const role = guild.roles.cache.get(session.selectedRoleId);
+  const category = staffRosterCategories.find(({ key }) => key === session.selectedCategoryKey);
+  if (!role || !category || session.roles.length >= maxStaffRosterRoles ||
+      session.roles.some((entry) => entry.roleId === role.id)) {
+    return null;
+  }
+  const position = session.roles.length + 1;
+  session.roles.push({ roleId: role.id, categoryKey: category.key });
+  session.selectedRoleId = null;
+  session.selectedCategoryKey = null;
+  session.expiresAt = Date.now() + 15 * 60 * 1000;
+  return { role, category, position };
+}
+
 async function handleStaffRosterRoleSelect(interaction) {
   const [, , ownerId] = interaction.customId.split(":");
   const session = await getStaffRosterSetupSession(interaction, ownerId);
@@ -1826,8 +1839,11 @@ async function handleStaffRosterRoleSelect(interaction) {
   }
   session.selectedRoleId = roleId;
   session.expiresAt = Date.now() + 15 * 60 * 1000;
+  const added = commitStaffRosterSelection(session, interaction.guild);
   await interaction.update({
-    content: `Wybierz kategorię dla roli **${role.name}**, a następnie dodaj ją jako pozycję ${session.roles.length + 1}.`,
+    content: added
+      ? `✅ Dodano **${added.role.name}** do ${added.category.title} jako pozycję ${added.position}. Wybierz następną rolę.`
+      : `Wybierz kategorię dla **${role.name}**. Po jej wybraniu rola zostanie dodana automatycznie jako następna pozycja.`,
     embeds: [makeStaffRosterSetupEmbed(session, interaction.guild)],
     components: makeStaffRosterSetupComponents(interaction.user.id, session, interaction.guild),
   });
@@ -1837,31 +1853,18 @@ async function handleStaffRosterCategorySelect(interaction) {
   const [, , ownerId] = interaction.customId.split(":");
   const session = await getStaffRosterSetupSession(interaction, ownerId);
   if (!session) return;
-  session.selectedCategoryKey = interaction.values[0];
-  session.expiresAt = Date.now() + 15 * 60 * 1000;
-  await interaction.update({
-    content: session.selectedRoleId
-      ? `Rola **${interaction.guild.roles.cache.get(session.selectedRoleId)?.name ?? "niedostępna"}** będzie na pozycji ${session.roles.length + 1}. Dodaj ją albo zmień wybór.`
-      : `Wybrano kategorię **${staffRosterCategories.find(({ key }) => key === session.selectedCategoryKey).title}**. Najpierw wybierz rolę.`,
-    embeds: [makeStaffRosterSetupEmbed(session, interaction.guild)],
-    components: makeStaffRosterSetupComponents(interaction.user.id, session, interaction.guild),
-  });
-}
-
-async function handleStaffRosterAdd(interaction) {
-  const ownerId = interaction.customId.split(":")[2];
-  const session = await getStaffRosterSetupSession(interaction, ownerId);
-  if (!session) return;
-  if (!session.selectedRoleId || !session.selectedCategoryKey || session.roles.length >= maxStaffRosterRoles) {
-    await interaction.reply({ content: "Wybierz jedną rolę i jej kategorię. Maksymalnie można dodać 40 ról.", ephemeral: true });
+  const selectedCategory = staffRosterCategories.find(({ key }) => key === interaction.values[0]);
+  if (!selectedCategory) {
+    await interaction.reply({ content: "Wybierz jedną z dostępnych kategorii.", ephemeral: true });
     return;
   }
-  session.roles.push({ roleId: session.selectedRoleId, categoryKey: session.selectedCategoryKey });
-  session.selectedRoleId = null;
-  session.selectedCategoryKey = null;
+  session.selectedCategoryKey = selectedCategory.key;
   session.expiresAt = Date.now() + 15 * 60 * 1000;
+  const added = commitStaffRosterSelection(session, interaction.guild);
   await interaction.update({
-    content: `Dodano pozycję ${session.roles.length}. Następna rola będzie pozycją ${session.roles.length + 1}.`,
+    content: added
+      ? `✅ Dodano **${added.role.name}** do ${added.category.title} jako pozycję ${added.position}. Wybierz następną rolę.`
+      : `Wybrano kategorię **${selectedCategory.title}**. Teraz wybierz rolę; zostanie dodana automatycznie.`,
     embeds: [makeStaffRosterSetupEmbed(session, interaction.guild)],
     components: makeStaffRosterSetupComponents(interaction.user.id, session, interaction.guild),
   });
@@ -1952,30 +1955,31 @@ async function handleStaffRosterPublish(interaction) {
       .filter((entry) => entry.categoryKey === category.key);
     const lines = [];
     for (const entry of categoryRoles) {
-      const roleName = entry.role.name.replace(/([*_`~|])/g, "\\$1");
+      const roleName = escapeStaffRoleName(entry.role.name);
       const roleMembers = members
         .filter((member) => !member.user.bot && member.roles.cache.has(entry.role.id))
         .sort((left, right) => left.displayName.localeCompare(right.displayName, "pl"));
-      lines.push(`**${entry.position}. ${roleName}**`);
+      lines.push(`**${String(entry.position).padStart(2, "0")} · ${roleName}**`);
       if (roleMembers.size === 0) {
-        lines.push("— brak członków");
+        lines.push("_Brak przypisanych członków_");
         continue;
       }
       for (const member of roleMembers.values()) {
         memberIds.add(member.id);
-        lines.push(`• <@${member.id}>`);
+        lines.push(`↳ <@${member.id}>`);
       }
     }
     return {
-      name: `${category.title} · ${categoryRoles.length} ról`,
+      name: `${category.emoji} ${category.title} · ${categoryRoles.length} ról`,
       value: limitRosterField(lines),
     };
   });
   const embed = new EmbedBuilder()
-    .setColor(0x3498db)
-    .setTitle("Skład administracji")
-    .setDescription(`Kolejność jest ustawiona ręcznie: pozycja 1 jest najwyżej, a każda następna niżej. Członkowie są pokazani pod każdą posiadaną pozycją.\n**Role:** ${session.roles.length} · **Osoby:** ${memberIds.size}`)
+    .setColor(0x5865f2)
+    .setTitle("🏛️ Skład administracji")
+    .setDescription(`**Pozycje od góry do dołu** · ${session.roles.length} ról · ${memberIds.size} osób\nKażda osoba jest wymieniona pod wszystkimi posiadanymi pozycjami.`)
     .addFields(fields)
+    .setFooter({ text: "Pozycja 01 jest najwyżej • kolejność wybrana przez administrację" })
     .setTimestamp();
 
   await updateWebhookConfig(guild.id, {
@@ -5204,8 +5208,6 @@ client.on("interactionCreate", async (interaction) => {
       await handleStaffRosterRoleSelect(interaction);
     } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith("staff-roster:category:")) {
       await handleStaffRosterCategorySelect(interaction);
-    } else if (interaction.isButton() && interaction.customId.startsWith("staff-roster:add:")) {
-      await handleStaffRosterAdd(interaction);
     } else if (interaction.isButton() && interaction.customId.startsWith("staff-roster:undo:")) {
       await handleStaffRosterUndo(interaction);
     } else if (interaction.isButton() && interaction.customId.startsWith("staff-roster:publish:")) {
