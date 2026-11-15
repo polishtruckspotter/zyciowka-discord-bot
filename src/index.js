@@ -95,6 +95,7 @@ const weaponPermitPublicationChannelId = "1561435546876907696";
 const vehicleRegistrationChannelId = "1561435546876907693";
 const vehicleRegistrationInstructionsChannelId = "1561440076213387354";
 const idCardSearchChannelId = "1561435546876907694";
+const noMassMentionRoleId = "1561435544993665153";
 const commandGuildId = process.env.GUILD_ID || "1561435544930623619";
 const praiseLogChannelIds = {
   skarga: "1561435546624991333",
@@ -1448,6 +1449,40 @@ async function handleBotKickChannelMessage(message) {
       botKickChannelQueues.delete(message.channelId);
     }
   }
+}
+
+async function handleRestrictedMassMention(message) {
+  if (!message.guild || message.author.bot || message.webhookId) return false;
+  const member = message.member ?? await message.guild.members.fetch(message.author.id);
+  if (!member.roles.cache.has(noMassMentionRoleId)) return false;
+
+  const violatedRule =
+    message.mentions.roles.has(noMassMentionRoleId) ||
+    message.mentions.everyone;
+  if (!violatedRule) return false;
+
+  const reason = `Niedozwolone masowe oznaczenie przez członka roli ${noMassMentionRoleId}.`;
+  const [deleteResult, timeoutResult] = await Promise.allSettled([
+    message.delete(),
+    member.timeout(60 * 1000, reason),
+  ]);
+  if (deleteResult.status === "rejected") {
+    console.error(
+      `[anti-mention] Nie udało się usunąć wiadomości ${message.id} użytkownika ${message.author.id}:`,
+      deleteResult.reason,
+    );
+  }
+  if (timeoutResult.status === "rejected") {
+    console.error(
+      `[anti-mention] Nie udało się wyciszyć użytkownika ${message.author.id} na 1 minutę:`,
+      timeoutResult.reason,
+    );
+  } else {
+    console.info(
+      `[anti-mention] Użytkownik ${message.author.tag} (${message.author.id}) otrzymał timeout na 1 minutę za niedozwolone oznaczenie.`,
+    );
+  }
+  return true;
 }
 
 async function processBotKickChannelMessage(message) {
@@ -5666,7 +5701,7 @@ client.once("ready", async () => {
   }
 });
 
-client.on("messageCreate", (message) => {
+client.on("messageCreate", async (message) => {
   if (!message.guild) {
     if (recruitmentApplications.has(message.author.id)) {
       handleRecruitmentAnswer(message).catch((error) => {
@@ -5689,6 +5724,12 @@ client.on("messageCreate", (message) => {
           .catch((replyError) => console.error("Nie udało się powiadomić o błędzie wniosku:", replyError));
       });
     }
+    return;
+  }
+  try {
+    if (await handleRestrictedMassMention(message)) return;
+  } catch (error) {
+    console.error("Nie udało się zastosować reguły anty-masowych oznaczeń:", error);
     return;
   }
   handleEconomyCommand(message).catch((error) => {
