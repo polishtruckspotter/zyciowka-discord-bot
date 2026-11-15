@@ -185,7 +185,7 @@ const setupCommand = new SlashCommandBuilder()
   .addSubcommand((subcommand) =>
     subcommand
       .setName("tickets")
-      .setDescription("Publikuje panel pięciu kategorii ticketów.")
+    .setDescription("Publikuje panel kategorii ticketów.")
       .addChannelOption((option) =>
         option.setName("kanal-panelu").setDescription("Kanał, na którym opublikować panel.").addChannelTypes(ChannelType.GuildText).setRequired(true),
       )
@@ -211,6 +211,28 @@ const setupCommand = new SlashCommandBuilder()
       )
       .addRoleOption((option) =>
         option.setName("rola-po-akceptacji").setDescription("Rola nadawana kandydatowi po zaakceptowaniu podania.").setRequired(true),
+      ),
+  )
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
+
+const createCommand = new SlashCommandBuilder()
+  .setName("stworz")
+  .setDescription("Tworzy zestawienia serwera.")
+  .addSubcommandGroup((group) =>
+    group
+      .setName("nasza")
+      .setDescription("Tworzy zestawienie administracji.")
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("adm")
+          .setDescription("Publikuje skład administracji według wybranych ról.")
+          .addChannelOption((option) =>
+            option
+              .setName("kanal")
+              .setDescription("Kanał, na który bot wyśle zestawienie.")
+              .addChannelTypes(ChannelType.GuildText)
+              .setRequired(true),
+          ),
       ),
   )
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
@@ -254,6 +276,7 @@ const findRecordCommand = new SlashCommandBuilder()
 
 const commands = [
   setupCommand,
+  createCommand,
   activityCheckCommand,
   botKickCommand,
   vehicleRegistrationCommand,

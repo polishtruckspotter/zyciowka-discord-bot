@@ -20,14 +20,14 @@ Polskojęzyczny bot do weryfikacji członków i podstawowej moderacji serwera Di
    - `DISCORD_TOKEN` — token bota; nie udostępniaj go nikomu.
    - `CLIENT_ID` — Application ID aplikacji Discord.
    - `GUILD_ID` — ID serwera, domyślnie `1561435544930623619`; komendy slash są rejestrowane na tym serwerze. Bot musi już należeć do niego; samo ID nie dodaje bota do serwera.
-   - `MOD_LOG_CHANNEL_ID` — opcjonalne ID kanału logów moderacji.
+   - `MOD_LOG_CHANNEL_ID` — ID kanału logów moderacji; ustaw prywatny kanał, aby personel otrzymywał alerty antyraid.
 
-3. W Discord Developer Portal → Bot → Privileged Gateway Intents włącz **Message Content Intent**. Bot potrzebuje go, aby odczytywać treść logów wysyłanych przez webhook gry i obsługiwać komendy ekonomii z prefiksem `!`. Włącz również **Server Members Intent** (`Guild Members`), aby wykrywać dołączających członków i wyrzucać boty. Bot korzysta też z intents `Guilds` i `Guild Messages`.
+3. W Discord Developer Portal → Bot → Privileged Gateway Intents włącz **Message Content Intent**. Bot potrzebuje go, aby odczytywać treść logów wysyłanych przez webhook gry i obsługiwać komendy ekonomii z prefiksem `!`. Włącz również **Server Members Intent** (`Guild Members`), aby wykrywać dołączających członków i alertować personel o podejrzanych dołączeniach. Bot korzysta też z intents `Guilds` i `Guild Messages`.
 
 4. Zaproś bota na serwer ze scope'ami `bot` i `applications.commands`. Przyznaj mu co najmniej:
    - View Channels, Send Messages i Embed Links,
    - Manage Roles (oraz ustaw najwyższą rolę bota wyżej niż obie role wybrane w `/setup-weryfikacja`),
-   - Moderate Members, Kick Members, Ban Members i Manage Messages dla funkcji moderacji. Uprawnienie Kick Members jest wymagane także do automatycznego wyrzucania botów.
+   - Moderate Members, Kick Members, Ban Members i Manage Messages dla funkcji moderacji. Kick Members jest potrzebne do komendy `/bot kick kanal`.
 
 5. Uruchom bota:
 
@@ -47,7 +47,7 @@ Bot jest procesem Discord Gateway, więc nie potrzebuje strony WWW ani otwartego
    - `DISCORD_TOKEN` — token bota.
    - `CLIENT_ID` — Application ID bota.
    - `GUILD_ID` — opcjonalny ID serwera Discord; zalecany, żeby komendy pojawiły się szybciej podczas konfiguracji.
-   - `MOD_LOG_CHANNEL_ID` — opcjonalny ID kanału logów moderacji.
+   - `MOD_LOG_CHANNEL_ID` — ID prywatnego kanału moderacji, wymagane do dostarczania alertów antyraid personelowi.
 4. Zainstaluj zależności jednorazowo z konsoli Wispbyte (nie ustawiaj tego jako Startup Command):
 
    ```sh
@@ -74,8 +74,9 @@ Dodaj `DISCORD_TOKEN` i `CLIENT_ID` w ustawieniach zmiennych środowiskowych Wis
 - `/informacja ekonomia` wyświetla w formie embedu pełną listę komend ekonomii, cooldowny, zasady banku, przelewów i ryzyka.
 - `/aktywnosc check setup kanal-panelu kanal-checku rola-do-pingowania rola-uprawniona [rola-uprawniona-2 ... rola-uprawniona-22]` — publikuje panel w formie embedu. Osoba z jedną z wybranych ról może kliknąć przycisk, wypełnić formularz z celem (liczba 0–100000) i opisem, a bot opublikuje check jako embed na wskazanym kanale i pingnie wybraną konkretną rolę (rola `@everyone` nie jest dozwolona). Pod checkiem członkowie mogą zapisać się przyciskiem „Zapisz mnie”; lista uczestników i jej licznik aktualizują się na embedzie, a ponowne kliknięcie wycofuje zapis. Uczestnicy są zapisywani w `data/activity-check-participants.json`. Wymaga uprawnienia Zarządzanie serwerem; konfiguracja jest zapisywana w `data/eh-webhook-config.json`.
 - `/bot kick kanal` — konfiguruje kanał do zgłaszania zhakowanych kont i publikuje na nim polski embed. Każda wiadomość od użytkownika na skonfigurowanym kanale powoduje automatyczne wyrzucenie autora oraz usunięcie wszystkich wiadomości z tego kanału z ostatnich 5 minut. Wymaga uprawnienia Zarządzanie serwerem; bot musi mieć uprawnienia Wyrzucanie członków, Zarządzanie wiadomościami, Wysyłanie wiadomości i Osadzanie linków.
-- `/setup tickets kanal-panelu kategoria-ticketow rola-personelu` — publikuje panel z pięcioma rodzajami zgłoszeń. Wszystkie tickety trafiają do jednej wybranej kategorii Discord, a każdy kanał widzi jego autor i wskazana rola personelu. Wymaga Zarządzania serwerem i uprawnienia bota Zarządzanie kanałami.
-- `/setup rekru kanal-panelu kanal-podan rola-rekrutacji rola-po-akceptacji` — publikuje panel podań. Kandydat odpowiada po kolei na 17 pytań w DM; gotowe podanie bot wysyła na wskazany kanał podań, który musi być ukryty przed `@everyone` i dostępny dla roli rekrutacji. Pierwsza wiadomość zawiera krótkie podsumowanie i heurystyczny wskaźnik sygnałów stylu AI (0–100), po niej bot publikuje pełne odpowiedzi. Wskaźnik nie wykrywa autorstwa ani nie jest dowodem; personel powinien samodzielnie ocenić podanie. Personel może zaakceptować podanie przyciskiem, aby nadać kandydatowi skonfigurowaną rolę, albo je odrzucić. Kandydat może wpisać `anuluj`, aby przerwać.
+- `/setup tickets kanal-panelu kategoria-ticketow rola-personelu` — publikuje panel z sześcioma rodzajami zgłoszeń, w tym „Współpraca”. Wszystkie tickety trafiają do jednej wybranej kategorii Discord, a każdy kanał widzi jego autor i wskazana rola personelu. Wymaga Zarządzania serwerem i uprawnienia bota Zarządzanie kanałami.
+- `/setup rekru kanal-panelu kanal-podan rola-rekrutacji rola-po-akceptacji` — publikuje panel podań. Kandydat odpowiada po kolei na 17 pytań w DM; gotowe podanie bot wysyła jako jeden embed na wskazany kanał podań, który musi być ukryty przed `@everyone` i dostępny dla roli rekrutacji. Embed zawiera pełne odpowiedzi, czas wypełnienia oraz heurystyczny wskaźnik sygnałów stylu AI (0–100). Wskaźnik nie określa autorstwa ani prawdopodobieństwa użycia AI i nie może być podstawą decyzji; personel powinien samodzielnie ocenić podanie. Odpowiedź może mieć maksymalnie 1 000 znaków, a całe podanie 3 500 znaków. Personel może zaakceptować podanie przyciskiem, aby nadać kandydatowi skonfigurowaną rolę, albo je odrzucić. Kandydat może wpisać `anuluj`, aby przerwać.
+- `/stworz nasza adm kanal` — otwiera administratorowi panel wyboru ról dla trzech grup: Zarząd, Opiekunowie i Administracja. Wybierz co najmniej jedną rolę w każdej grupie (maksymalnie 40 różnych ról łącznie), a następnie opublikuj zestawienie na wskazanym kanale. Embed pokazuje członków z wybranymi rolami, grupę i nazwę roli jako pozycję; role w każdej grupie są sortowane od najwyższej do najniższej według hierarchii Discord, a członkowie są pobierani przy każdej publikacji.
 - `/zarejestruj pojazd marka model kolor tablice wlasciciel zdjecie` — publikuje kartę pojazdu ze zdjęciem na kanale `1561435546876907693` i pingnie wskazanego właściciela Discord. Administrator może użyć `/zarejestruj instrukcja`, aby opublikować polską instrukcję na kanale `1561440076213387354`.
 - `/znajdz pojazd user`, `/znajdz pozwolenie-na-bron user` i `/znajdz dowod user` — wyszukują i prywatnie zwracają odnośniki do maksymalnie 10 najnowszych rekordów wybranego użytkownika. Dowody są wyszukiwane na kanale ustawionym w `/setup-dowody` (lub na kanale `1561435546876907694`, jeśli konfiguracja nie została jeszcze zapisana). Ponownie uruchom `/setup-dowody` po wdrożeniu aktualizacji, aby bot zapamiętał wybrany kanał. Dowody utworzone wcześniej można znaleźć, jeśli ich embed zawiera właściciela Discord albo wiadomość bota go pingowała.
 - `/setup-weryfikacja kanal rola-do-nadania rola-do-nadania-2 rola-do-zabrania` — publikuje panel w wybranym kanale. Po poprawnej odpowiedzi matematycznej bot nada dwie wybrane role i zabierze wskazaną rolę. Wymaga uprawnienia Zarządzanie serwerem.
@@ -88,11 +89,11 @@ Dodaj `DISCORD_TOKEN` i `CLIENT_ID` w ustawieniach zmiennych środowiskowych Wis
 - `/plusminus` — nadaje albo zabiera rolę i wysyła embed na stały kanał logów `1561435547946197108`.
 - `/plusa wniosek ile dlaczego osoby-potwierdzajace [dowod]` — składa wniosek o plusa; osoba składająca jest uzupełniana automatycznie, dowód jest opcjonalny, a embed trafia na kanał `1561440698589511760`.
 - `/pochwala-skarga` — każdy członek serwera może użyć komendy na dowolnym kanale bez dodatkowych uprawnień; skargi trafiają na `1561435546624991333`, a pochwały na `1561435546365067374`, zależnie od wybranego typu wpisu.
-- `/urlop kanal-wnioskow` — otwiera polski formularz z wymaganym czasem trwania i powodem oraz opcjonalnymi informacjami. Wniosek trafia na wybrany kanał z przyciskami zaakceptowania urlopu, zakończenia zaakceptowanego urlopu albo zakończenia go z podanym powodem. Przyciski obsługuje personel z uprawnieniem Zarządzanie serwerem, Moderowanie członków, Wyrzucanie członków lub Banowanie członków.
+- `/urlop kanal-wnioskow` — otwiera polski formularz z wymaganym czasem trwania i powodem oraz opcjonalnymi informacjami. Wniosek trafia na wybrany kanał, gdzie upoważniony personel może go zaakceptować albo odrzucić; zaakceptowany urlop można później zakończyć z przyciskiem, opcjonalnie podając powód. Wnioskodawca otrzymuje DM z decyzją. Przyciski obsługuje personel z uprawnieniem Zarządzanie serwerem, Moderowanie członków, Wyrzucanie członków lub Banowanie członków.
 - `/ostrzez` — ostrzega użytkownika; bot próbuje wysłać mu wiadomość prywatną. Wymaga uprawnienia Moderowanie członków.
 - `/timeout` — nakłada timeout od 1 minuty do 28 dni. Wymaga uprawnienia Moderowanie członków.
 - `/mute` — wycisza użytkownika przez Discord timeout na 1 minutę do 28 dni; wymaga powodu i czasu trwania. Wymaga uprawnienia Moderowanie członków.
-- Automatyczne wyrzucanie botów — bot wyrzuca każde nowe konto bota zaraz po dołączeniu. Obejmuje to także legalne integracje; boty obecne na serwerze przed uruchomieniem tej funkcji nie są wyrzucane.
+- Detektor antyraid — bot wysyła alert na kanał `MOD_LOG_CHANNEL_ID`, gdy dołączy bot, konto młodsze niż 7 dni albo co najmniej 5 kont w ciągu 10 sekund. Alerty nie powodują automatycznego wyrzucenia ani bana. Ustaw `MOD_LOG_CHANNEL_ID` na prywatny kanał moderacji, aby personel otrzymywał alerty; jeśli zmienna nie jest ustawiona, wykrycia trafiają tylko do konsoli.
 - `/kick` — wyrzuca użytkownika; wymaga podania powodu. Wymaga uprawnienia Wyrzucanie członków.
 - `/ban` — banuje użytkownika; wymaga podania powodu i opcjonalnie usuwa jego wiadomości z ostatnich 0–168 godzin. Wymaga uprawnienia Banowanie członków.
 - `/wyczysc` — usuwa od 1 do 100 wiadomości młodszych niż 14 dni w bieżącym kanale. Wymaga uprawnienia Zarządzanie wiadomościami.

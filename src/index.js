@@ -16,6 +16,7 @@ const {
   Partials,
   PermissionFlagsBits,
   REST,
+  RoleSelectMenuBuilder,
   Routes,
   StringSelectMenuBuilder,
   TextInputBuilder,
@@ -41,12 +42,26 @@ const waitingRoomPingCooldownMs = 30 * 1000;
 const waitingRoomPingCooldowns = new Map();
 const recruitmentApplications = new Map();
 const recruitmentDecisionLocks = new Set();
+const staffRosterSetupSessions = new Map();
+const raidJoinTracking = new Map();
+const raidJoinWindowMs = 10 * 1000;
+const raidJoinBurstThreshold = 5;
+const raidAlertBatchDelayMs = 2 * 1000;
+const suspiciousAccountAgeMs = 7 * 24 * 60 * 60 * 1000;
+const maxStaffRosterRoles = 40;
+const maxRecruitmentAnswerCharacters = 3500;
+const staffRosterCategories = [
+  { key: "zarzad", title: "Zarząd" },
+  { key: "opiekunowie", title: "Opiekunowie" },
+  { key: "administracja", title: "Administracja" },
+];
 const ticketCategories = [
   { key: "general", title: "Pytanie / Pomoc Ogólna", description: "Ogólne pytania dotyczące rozgrywki, zasad serwera oraz wątpliwości.", emoji: "❓" },
   { key: "eh", title: "Zgłoszenie EH", description: "Zgłoszenia dotyczące pojazdów, mechanik oraz wydarzeń w grze.", emoji: "🚔" },
   { key: "discord", title: "Zgłoszenie Discord", description: "Zgłoszenie złamania regulaminu Discord lub problemów z użytkownikami.", emoji: "💬" },
   { key: "technical", title: "Pomoc Techniczna", description: "Problemy techniczne, brak rangi, błędy dostępu lub inne usterki.", emoji: "🆘" },
   { key: "ban-appeal", title: "Odwołanie od Bana", description: "Wniosek o unban lub apelacja od nałożonej kary.", emoji: "⚖️" },
+  { key: "collaboration", title: "Współpraca", description: "Propozycje i pytania dotyczące współpracy z serwerem.", emoji: "🤝" },
 ];
 const recruitmentQuestions = [
   { section: "INFORMACJE O KANDYDACIE", question: "Imię / nick w grze: podaj imię lub nick z Roblox / Discord." },
@@ -935,6 +950,11 @@ function makeLeaveReviewRow(userId, status) {
       .setStyle(ButtonStyle.Success)
       .setDisabled(!pending),
     new ButtonBuilder()
+      .setCustomId(`leave:deny:${userId}`)
+      .setLabel("Odrzuć wniosek")
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(!pending),
+    new ButtonBuilder()
       .setCustomId(`leave:end:${userId}`)
       .setLabel("Zakończ urlop")
       .setStyle(ButtonStyle.Secondary)
@@ -1286,6 +1306,79 @@ async function sendModerationLog(interaction, title, target, reason, extra = {})
   await channel.send({ embeds: [embed] });
 }
 
+async function flushRaidJoinAlerts(guildId) {
+  const tracking = raidJoinTracking.get(guildId);
+  if (!tracking) return;
+  tracking.timeout = null;
+  const entries = [...tracking.pending.values()];
+  tracking.pending.clear();
+  if (entries.length === 0) return;
+
+  const channelId = process.env.MOD_LOG_CHANNEL_ID;
+  if (!channelId) {
+    console.warn(`[raid detector] Brak MOD_LOG_CHANNEL_ID; wykryte dołączenia na serwerze ${guildId}: ${entries.map(({ member }) => `${member.user.tag} (${member.id})`).join(", ")}`);
+    return;
+  }
+  const guild = client.guilds.cache.get(guildId) ?? await client.guilds.fetch(guildId);
+  const channel = await guild.channels.fetch(channelId);
+  if (!channel?.isTextBased() || !channel.send) {
+    throw new Error("MOD_LOG_CHANNEL_ID nie wskazuje kanału tekstowego dostępnego dla bota.");
+  }
+
+  const joinLines = entries.map(({ member, reasons }) => {
+    const createdAt = Math.floor(member.user.createdTimestamp / 1000);
+    const accountType = member.user.bot ? "konto bota" : "konto użytkownika";
+    return `• <@${member.id}> (${accountType}; utworzono <t:${createdAt}:R>) — ${[...reasons].join(", ")}`;
+  });
+  const embed = new EmbedBuilder()
+    .setColor(0xe67e22)
+    .setTitle("Wykryto podejrzane dołączenia")
+    .setDescription(`Wykryto ${entries.length} sygnałów wymagających sprawdzenia. Bot nie wyrzucił ani nie zbanował żadnego członka.`)
+    .addFields({ name: "Do sprawdzenia", value: limitRosterField(joinLines) })
+    .setTimestamp();
+  await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+}
+
+function trackGuildMemberJoin(member) {
+  if (member.id === client.user?.id) return;
+  const now = Date.now();
+  let tracking = raidJoinTracking.get(member.guild.id);
+  if (!tracking) {
+    tracking = { recent: [], pending: new Map(), burstAlertedUntil: 0, timeout: null };
+    raidJoinTracking.set(member.guild.id, tracking);
+  }
+  tracking.recent = tracking.recent.filter((join) => now - join.joinedAt <= raidJoinWindowMs);
+  tracking.recent.push({ member, joinedAt: now });
+
+  const addPending = (joinedMember, reason) => {
+    let entry = tracking.pending.get(joinedMember.id);
+    if (!entry) {
+      entry = { member: joinedMember, reasons: new Set() };
+      tracking.pending.set(joinedMember.id, entry);
+    }
+    entry.reasons.add(reason);
+  };
+
+  const accountAge = now - member.user.createdTimestamp;
+  if (member.user.bot) addPending(member, "nowe konto bota");
+  if (accountAge >= 0 && accountAge < suspiciousAccountAgeMs) {
+    addPending(member, "konto młodsze niż 7 dni");
+  }
+  if (tracking.recent.length >= raidJoinBurstThreshold && now >= tracking.burstAlertedUntil) {
+    tracking.burstAlertedUntil = now + raidJoinWindowMs;
+    for (const join of tracking.recent) {
+      addPending(join.member, `fala dołączeń (${tracking.recent.length} w 10 s)`);
+    }
+  }
+  if (tracking.pending.size > 0 && !tracking.timeout) {
+    tracking.timeout = setTimeout(() => {
+      flushRaidJoinAlerts(member.guild.id).catch((error) => {
+        console.error(`Nie udało się wysłać alertu antyraid na serwerze ${member.guild.id}:`, error);
+      });
+    }, raidAlertBatchDelayMs);
+  }
+}
+
 async function handleGameWebhookMessage(message) {
   if (!message.guildId || !message.webhookId) return;
   const config = webhookConfigs[message.guildId];
@@ -1591,7 +1684,197 @@ async function handleSetupCommand(interaction) {
   await interaction.reply({ content: `Panel rekrutacji opublikowano na ${panelChannel}; podania będą wysyłane do prywatnego kanału ${applicationsChannel}.`, ephemeral: true });
 }
 
+function makeStaffRosterSetupComponents(userId, roleIdsByCategory = {}) {
+  const rows = staffRosterCategories.map((category) => {
+    const menu = new RoleSelectMenuBuilder()
+      .setCustomId(`staff-roster:${category.key}:${userId}`)
+      .setPlaceholder(`Wybierz role: ${category.title} (${roleIdsByCategory[category.key]?.length ?? 0})`)
+      .setMinValues(1)
+      .setMaxValues(25);
+    return new ActionRowBuilder().addComponents(menu);
+  });
+  rows.push(new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`staff-roster:publish:${userId}`)
+      .setLabel("Opublikuj zestawienie")
+      .setStyle(ButtonStyle.Success),
+  ));
+  return rows;
+}
+
+async function handleCreateCommand(interaction) {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+    await interaction.reply({ content: "Do tworzenia zestawienia potrzebujesz uprawnienia Zarządzaj serwerem.", ephemeral: true });
+    return;
+  }
+  const destination = interaction.options.getChannel("kanal", true);
+  const botMember = await interaction.guild.members.fetchMe();
+  if (!botMember.permissionsIn(destination).has([
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.EmbedLinks,
+  ])) {
+    await interaction.reply({ content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${destination}.`, ephemeral: true });
+    return;
+  }
+  staffRosterSetupSessions.set(interaction.user.id, {
+    guildId: interaction.guildId,
+    destinationChannelId: destination.id,
+    roleIds: Object.fromEntries(staffRosterCategories.map(({ key }) => [key, []])),
+    expiresAt: Date.now() + 15 * 60 * 1000,
+  });
+  await interaction.reply({
+    content: `Wybierz co najmniej jedną rolę dla każdej kategorii. Możesz wybrać maksymalnie 40 różnych ról łącznie; nazwa roli będzie pokazana jako pozycja. Zestawienie zostanie wysłane na ${destination}.`,
+    components: makeStaffRosterSetupComponents(interaction.user.id, staffRosterSetupSessions.get(interaction.user.id).roleIds),
+    ephemeral: true,
+  });
+}
+
+async function handleStaffRosterRoleSelect(interaction) {
+  const [, categoryKey, ownerId] = interaction.customId.split(":");
+  const session = staffRosterSetupSessions.get(ownerId);
+  if (ownerId !== interaction.user.id) {
+    await interaction.reply({ content: "Tylko administrator, który rozpoczął tę konfigurację, może wybierać role.", ephemeral: true });
+    return;
+  }
+  if (!session || session.expiresAt <= Date.now() || session.guildId !== interaction.guildId ||
+      !staffRosterCategories.some(({ key }) => key === categoryKey)) {
+    staffRosterSetupSessions.delete(ownerId);
+    await interaction.reply({ content: "Ta konfiguracja zestawienia wygasła. Uruchom ponownie `/stworz nasza adm`.", ephemeral: true });
+    return;
+  }
+  session.roleIds[categoryKey] = interaction.values;
+  session.expiresAt = Date.now() + 15 * 60 * 1000;
+  const selectedCount = Object.values(session.roleIds).reduce((total, roleIds) => total + roleIds.length, 0);
+  await interaction.update({
+    content: `Wybrano ${selectedCount} ról z limitu ${maxStaffRosterRoles}. Wybierz role dla każdej z trzech kategorii, a następnie opublikuj zestawienie.`,
+    components: makeStaffRosterSetupComponents(interaction.user.id, session.roleIds),
+  });
+}
+
+function limitRosterField(lines) {
+  if (lines.length === 0) return "Brak skonfigurowanych ról.";
+  let value = "";
+  let omitted = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    let line = lines[index];
+    if (line.length > 900) line = `${line.slice(0, 899)}…`;
+    const next = value ? `${value}\n${line}` : line;
+    if (next.length > 930) {
+      omitted = lines.length - index;
+      break;
+    }
+    value = next;
+  }
+  if (omitted) value += `\n… oraz ${omitted} wpisów poza limitem wiadomości Discord.`;
+  return value;
+}
+
+async function handleStaffRosterPublish(interaction) {
+  const ownerId = interaction.customId.split(":")[2];
+  const session = staffRosterSetupSessions.get(ownerId);
+  if (ownerId !== interaction.user.id) {
+    await interaction.reply({ content: "Tylko administrator, który rozpoczął tę konfigurację, może ją opublikować.", ephemeral: true });
+    return;
+  }
+  if (!session || session.expiresAt <= Date.now() || session.guildId !== interaction.guildId) {
+    staffRosterSetupSessions.delete(ownerId);
+    await interaction.reply({ content: "Ta konfiguracja zestawienia wygasła. Uruchom ponownie `/stworz nasza adm`.", ephemeral: true });
+    return;
+  }
+  await interaction.deferUpdate();
+  const roleIds = Object.values(session.roleIds).flat();
+  const uniqueRoleIds = new Set(roleIds);
+  if (staffRosterCategories.some(({ key }) => session.roleIds[key].length === 0)) {
+    await interaction.editReply({ content: "Wybierz co najmniej jedną rolę dla każdej z trzech kategorii.", components: makeStaffRosterSetupComponents(interaction.user.id, session.roleIds) });
+    return;
+  }
+  if (uniqueRoleIds.size > maxStaffRosterRoles) {
+    await interaction.editReply({ content: `Wybrano ${uniqueRoleIds.size} różnych ról. Limit wynosi ${maxStaffRosterRoles}; usuń część ról i spróbuj ponownie.`, components: makeStaffRosterSetupComponents(interaction.user.id, session.roleIds) });
+    return;
+  }
+  if (uniqueRoleIds.size !== roleIds.length) {
+    await interaction.editReply({ content: "Ta sama rola nie może należeć do kilku kategorii. Popraw wybór przed publikacją.", components: makeStaffRosterSetupComponents(interaction.user.id, session.roleIds) });
+    return;
+  }
+
+  const guild = interaction.guild;
+  await guild.roles.fetch();
+  const selectedRoles = new Map();
+  for (const roleId of uniqueRoleIds) {
+    const role = guild.roles.cache.get(roleId);
+    if (!role || role.id === guild.id || role.managed) {
+      await interaction.editReply({ content: "Jedna z wybranych ról nie istnieje albo jest zarządzana przez integrację. Uruchom ponownie `/stworz nasza adm` i wybierz role serwera.", components: [] });
+      staffRosterSetupSessions.delete(ownerId);
+      return;
+    }
+    selectedRoles.set(roleId, role);
+  }
+
+  const destination = await guild.channels.fetch(session.destinationChannelId);
+  if (!destination || destination.type !== ChannelType.GuildText) {
+    throw new Error("Wybrany kanał zestawienia nie istnieje albo nie jest kanałem tekstowym.");
+  }
+  const botMember = await guild.members.fetchMe();
+  if (!botMember.permissionsIn(destination).has([
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.EmbedLinks,
+  ])) {
+    throw new Error(`Bot nie ma uprawnień do publikacji na ${destination}.`);
+  }
+
+  const members = await guild.members.fetch();
+  const memberIds = new Set();
+  const fields = staffRosterCategories.map((category) => {
+    const categoryRoles = session.roleIds[category.key]
+      .map((roleId) => selectedRoles.get(roleId))
+      .sort((left, right) => right.comparePositionTo(left));
+    const lines = [];
+    for (const role of categoryRoles) {
+      const roleMembers = members
+        .filter((member) => !member.user.bot && member.roles.cache.has(role.id))
+        .sort((left, right) => left.displayName.localeCompare(right.displayName, "pl"));
+      if (roleMembers.size === 0) {
+        lines.push(`• **${role.name.replace(/([*_`~|])/g, "\\$1")}** — brak członków`);
+        continue;
+      }
+      for (const member of roleMembers.values()) {
+        memberIds.add(member.id);
+        lines.push(`• <@${member.id}> — **${role.name.replace(/([*_`~|])/g, "\\$1")}**`);
+      }
+    }
+    return {
+      name: `${category.title} · ${categoryRoles.length} ról`,
+      value: limitRosterField(lines),
+    };
+  });
+  const embed = new EmbedBuilder()
+    .setColor(0x3498db)
+    .setTitle("Skład administracji")
+    .setDescription(`Członkowie serwera posiadający wybrane role. Nazwa roli oznacza pozycję; kategoria wskazuje przynależność do grupy.\n**Role:** ${uniqueRoleIds.size} · **Osoby:** ${memberIds.size}`)
+    .addFields(fields)
+    .setTimestamp();
+
+  await updateWebhookConfig(guild.id, {
+    staffRosterConfig: {
+      categories: session.roleIds,
+      destinationChannelId: destination.id,
+    },
+  });
+  await destination.send({ embeds: [embed], allowedMentions: { parse: [] } });
+  staffRosterSetupSessions.delete(ownerId);
+  await interaction.editReply({ content: `Zestawienie opublikowano na ${destination}.`, components: [] });
+}
+
 async function handleCommand(interaction) {
+  if (interaction.commandName === "stworz" &&
+      interaction.options.getSubcommandGroup() === "nasza" &&
+      interaction.options.getSubcommand() === "adm") {
+    await handleCreateCommand(interaction);
+    return;
+  }
+
   if (interaction.commandName === "close" && interaction.options.getSubcommand() === "mafia") {
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
       await interaction.reply({ content: "Tylko administratorzy z uprawnieniem Zarządzaj serwerem mogą zamykać mafie.", ephemeral: true });
@@ -2778,8 +3061,22 @@ function getRecruitmentStyleIndicator(answers) {
   const signals = [];
   let score = 0;
   const normalizedAnswers = answers.map((answer) => answer.toLocaleLowerCase("pl"));
-  const templatePhrases = [
+  const explicitAiStatements = [
     "jako model językowy",
+    "jako sztuczna inteligencja",
+    "jako ai",
+    "jestem modelem językowym",
+    "jestem sztuczną inteligencją",
+  ];
+  const explicitAiMatches = explicitAiStatements.filter((phrase) =>
+    normalizedAnswers.some((answer) => answer.includes(phrase)),
+  );
+  if (explicitAiMatches.length) {
+    score += 60;
+    signals.push(`jawne odniesienie do AI: ${explicitAiMatches.join(", ")}`);
+  }
+
+  const templatePhrases = [
     "warto zauważyć",
     "należy podkreślić",
     "należy pamiętać",
@@ -2789,21 +3086,43 @@ function getRecruitmentStyleIndicator(answers) {
     "kluczowe jest",
     "co więcej",
     "ponadto",
+    "należy mieć na uwadze",
+    "w obecnych czasach",
+    "przede wszystkim należy",
   ];
   const foundPhrases = templatePhrases.filter((phrase) =>
     normalizedAnswers.some((answer) => answer.includes(phrase)),
   );
   if (foundPhrases.length) {
-    score += Math.min(foundPhrases.length * 10, 40);
-    signals.push(`gotowe zwroty: ${foundPhrases.join(", ")}`);
+    score += Math.min(foundPhrases.length * 7, 28);
+    signals.push(`częste, szablonowe zwroty: ${foundPhrases.join(", ")}`);
   }
 
   const openings = normalizedAnswers
     .filter((answer) => answer.length >= 40)
     .map((answer) => answer.split(/\s+/).slice(0, 4).join(" "));
   if (new Set(openings).size < openings.length) {
-    score += 20;
+    score += 18;
     signals.push("powtarzający się początek odpowiedzi");
+  }
+
+  const substantiveAnswers = normalizedAnswers.filter((answer) => answer.length >= 60);
+  let repeatedContent = false;
+  for (let first = 0; first < substantiveAnswers.length && !repeatedContent; first += 1) {
+    const firstWords = new Set(substantiveAnswers[first].match(/[\p{L}\p{N}]{4,}/gu) ?? []);
+    for (let second = first + 1; second < substantiveAnswers.length; second += 1) {
+      const secondWords = new Set(substantiveAnswers[second].match(/[\p{L}\p{N}]{4,}/gu) ?? []);
+      const sharedWords = [...firstWords].filter((word) => secondWords.has(word)).length;
+      const unionSize = new Set([...firstWords, ...secondWords]).size;
+      if (unionSize && sharedWords / unionSize >= 0.8) {
+        repeatedContent = true;
+        break;
+      }
+    }
+  }
+  if (repeatedContent) {
+    score += 18;
+    signals.push("bardzo podobna treść kilku odpowiedzi");
   }
 
   const substantiveLengths = answers.map((answer) => answer.length).filter((length) => length >= 40);
@@ -2812,8 +3131,8 @@ function getRecruitmentStyleIndicator(answers) {
     const variance = substantiveLengths.reduce((sum, length) => sum + (length - average) ** 2, 0) /
       substantiveLengths.length;
     if (Math.sqrt(variance) / average <= 0.15) {
-      score += 10;
-      signals.push("bardzo podobna długość odpowiedzi");
+      score += 8;
+      signals.push("bardzo wyrównana długość odpowiedzi");
     }
   }
 
@@ -2823,41 +3142,45 @@ function getRecruitmentStyleIndicator(answers) {
   };
 }
 
-function buildRecruitmentSummaryEmbed(session, applicant) {
-  const answerExcerpt = (index, maxLength = 220) => {
-    const answer = session.answers[index]?.replace(/\s+/g, " ").trim();
-    return answer
-      ? answer.length > maxLength ? `${answer.slice(0, maxLength - 1)}…` : answer
-      : "Brak odpowiedzi";
-  };
+function formatElapsedTime(durationMs) {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours) return `${hours} godz. ${minutes} min. ${seconds} s`;
+  if (minutes) return `${minutes} min. ${seconds} s`;
+  return `${seconds} s`;
+}
+
+function buildRecruitmentSummaryEmbed(session, applicant, elapsedMs) {
   const { score, signals } = getRecruitmentStyleIndicator(session.answers);
   const scoreDescription = signals.length
     ? signals.map((signal) => `• ${signal}`).join("\n")
-    : "Nie znaleziono sygnałów z krótkiej listy heurystycznej.";
-  const summary = new EmbedBuilder()
+    : "Nie znaleziono sygnałów na zastosowanej liście heurystycznej.";
+  const answerFields = recruitmentQuestions.map((item, index) => ({
+    name: `${index + 1}. ${item.section} — ${item.question}`,
+    value: session.answers[index],
+  }));
+  return new EmbedBuilder()
     .setColor(0xe0a12f)
-    .setTitle("Podsumowanie podania dla personelu")
+    .setTitle("Podanie rekrutacyjne")
     .setDescription([
       `**Kandydat:** <@${applicant.id}> (${applicant.tag})`,
-      `**Wiek:** ${answerExcerpt(1, 80)}`,
-      `**Dostępność:** ${answerExcerpt(2)}`,
-      `**Motywacja:** ${answerExcerpt(3)}`,
-      `**Doświadczenie:** ${answerExcerpt(4)}`,
-      `**Reakcja na złamanie zasad:** ${answerExcerpt(14)}`,
-    ].join("\n\n"))
+      `**Czas wypełnienia:** ${formatElapsedTime(elapsedMs)}`,
+    ].join("\n"))
     .addFields(
+      ...answerFields,
       {
-        name: `Sygnały stylu AI (heurystycznie): ${score}/100`,
+        name: `Wskaźnik stylu przypominającego AI: ${score}/100`,
         value: scoreDescription,
       },
       {
-        name: "Ważne",
-        value: "To nie jest wykrywacz AI ani prawdopodobieństwo autorstwa. Wskaźnik opiera się wyłącznie na prostych wzorcach tekstu, może się mylić i nie powinien być podstawą decyzji. Przeczytaj pełne odpowiedzi i porozmawiaj z kandydatem.",
+        name: "Jak interpretować wskaźnik",
+        value: "To wyłącznie heurystyczny wynik sygnałów tekstowych — nie prawdopodobieństwo ani dowód użycia AI. Może błędnie ocenić zarówno tekst człowieka, jak i AI; nie podejmuj decyzji rekrutacyjnej wyłącznie na jego podstawie.",
       },
     )
     .setFooter({ text: `recruitment-application:${session.guildId}:${applicant.id}:pending` })
     .setTimestamp();
-  return summary;
 }
 
 async function handleTicketSelect(interaction) {
@@ -2919,7 +3242,15 @@ async function startRecruitmentApplication(interaction) {
   }
   recruitmentApplications.delete(interaction.user.id);
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const session = { guildId: interaction.guildId, ...config, answers: [], questionIndex: 0, expiresAt: Date.now() + 15 * 60 * 1000 };
+  const session = {
+    guildId: interaction.guildId,
+    ...config,
+    answers: [],
+    answerCharacters: 0,
+    questionIndex: 0,
+    startedAt: Date.now(),
+    expiresAt: Date.now() + 15 * 60 * 1000,
+  };
   recruitmentApplications.set(interaction.user.id, session);
   try {
     await interaction.user.send(recruitmentPrompt(0));
@@ -2948,11 +3279,15 @@ async function handleRecruitmentAnswer(message) {
     await message.reply("Podaj odpowiedź tekstową albo wpisz „anuluj”, aby przerwać.");
     return true;
   }
-  if (answer.length > 1000) {
-    await message.reply("Odpowiedź jest za długa. Skróć ją do 1 000 znaków i wyślij ponownie.");
+  const remainingQuestions = recruitmentQuestions.length - session.questionIndex;
+  const remainingCharacters = maxRecruitmentAnswerCharacters - session.answerCharacters;
+  const answerLimit = Math.min(1000, Math.floor(remainingCharacters / remainingQuestions));
+  if (answer.length > answerLimit) {
+    await message.reply(`Skróć tę odpowiedź do ${answerLimit} znaków lub mniej, aby wszystkie odpowiedzi zmieściły się w jednym embedzie.`);
     return true;
   }
   session.answers.push(answer);
+  session.answerCharacters += answer.length;
   session.questionIndex += 1;
   session.expiresAt = Date.now() + 15 * 60 * 1000;
   if (session.questionIndex < recruitmentQuestions.length) {
@@ -2967,23 +3302,6 @@ async function handleRecruitmentAnswer(message) {
   if (!destination || destination.type !== ChannelType.GuildText || !reviewerRole) {
     throw new Error("Kanał podań albo rola rekrutacji nie istnieje. Powiadom administrację.");
   }
-  const groupSize = 4;
-  const pageCount = Math.ceil(recruitmentQuestions.length / groupSize);
-  const embeds = [];
-  for (let page = 0; page < pageCount; page += 1) {
-    const start = page * groupSize;
-    const fields = recruitmentQuestions.slice(start, start + groupSize).map((item, offset) => ({
-      name: `${start + offset + 1}. ${item.question}`,
-      value: session.answers[start + offset],
-    }));
-    const embed = new EmbedBuilder()
-      .setColor(0x3498db)
-      .setTitle(`Podanie rekrutacyjne • ${page + 1}/${pageCount}`)
-      .setDescription(`Kandydat: <@${message.author.id}> (${message.author.tag})`)
-      .addFields(fields)
-      .setTimestamp();
-    embeds.push(embed);
-  }
   const decisionRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("recruitment:approve").setLabel("Akceptuj i nadaj rolę").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("recruitment:reject").setLabel("Odrzuć podanie").setStyle(ButtonStyle.Danger),
@@ -2994,12 +3312,9 @@ async function handleRecruitmentAnswer(message) {
   };
   await destination.send({
     ...reviewHeader,
-    embeds: [buildRecruitmentSummaryEmbed(session, message.author)],
+    embeds: [buildRecruitmentSummaryEmbed(session, message.author, Date.now() - session.startedAt)],
     components: [decisionRow],
   });
-  for (const embed of embeds) {
-    await destination.send({ embeds: [embed], allowedMentions: { parse: [] } });
-  }
   await message.author.send("Dziękujemy! Twoje podanie zostało wysłane do zespołu rekrutacji.");
   return true;
 }
@@ -3373,6 +3688,7 @@ async function handleButton(interaction) {
 
   if (
     interaction.customId.startsWith("leave:accept:") ||
+    interaction.customId.startsWith("leave:deny:") ||
     interaction.customId.startsWith("leave:end:") ||
     interaction.customId.startsWith("leave:end-reason:")
   ) {
@@ -3412,13 +3728,17 @@ async function handleButton(interaction) {
 
     const nextStatus = action === "accept"
       ? "Urlop zaakceptowany"
-      : action === "end"
-        ? "Urlop zakończony"
-        : null;
-    const expectedStatus = action === "accept" ? "Oczekuje na akceptację" : "Urlop zaakceptowany";
+      : action === "deny"
+        ? "Wniosek o urlop odrzucony"
+        : action === "end"
+          ? "Urlop zakończony"
+          : null;
+    const expectedStatus = action === "accept" || action === "deny"
+      ? "Oczekuje na akceptację"
+      : "Urlop zaakceptowany";
     if (!nextStatus || currentStatus !== expectedStatus) {
       await interaction.reply({
-        content: action === "accept"
+        content: action === "accept" || action === "deny"
           ? "Ten wniosek został już rozpatrzony."
           : "Można zakończyć tylko zaakceptowany urlop.",
         ephemeral: true,
@@ -3447,7 +3767,7 @@ async function handleButton(interaction) {
         return;
       }
       const updatedEmbed = EmbedBuilder.from(currentEmbed)
-        .setColor(action === "accept" ? 0x2ecc71 : 0x95a5a6)
+        .setColor(action === "accept" ? 0x2ecc71 : action === "deny" ? 0xe74c3c : 0x95a5a6)
         .setFields(
           ...currentEmbed.fields.map((field) =>
             field.name === "Status"
@@ -3461,17 +3781,24 @@ async function handleButton(interaction) {
         components: [makeLeaveReviewRow(userId, nextStatus)],
         allowedMentions: { parse: [] },
       });
-      await interaction.editReply(action === "accept" ? "Wniosek o urlop został zaakceptowany." : "Urlop został zakończony.");
+      const staffReply = action === "accept"
+        ? "Wniosek o urlop został zaakceptowany."
+        : action === "deny"
+          ? "Wniosek o urlop został odrzucony."
+          : "Urlop został zakończony.";
+      await interaction.editReply(staffReply);
       const applicant = await client.users.fetch(userId).catch((error) => {
         console.error(`Nie udało się pobrać użytkownika ${userId} do powiadomienia o urlopie:`, error);
         return null;
       });
       if (applicant) {
-        await applicant.send(
-          action === "accept"
-            ? `Twój wniosek o urlop na serwerze ${interaction.guild.name} został zaakceptowany.`
-            : `Twój urlop na serwerze ${interaction.guild.name} został zakończony.`,
-        ).catch((error) => console.error(`Nie udało się powiadomić użytkownika ${userId} o zmianie statusu urlopu:`, error));
+        const applicantMessage = action === "accept"
+          ? `Twój wniosek o urlop na serwerze ${interaction.guild.name} został zaakceptowany.`
+          : action === "deny"
+            ? `Twój wniosek o urlop na serwerze ${interaction.guild.name} został odrzucony.`
+            : `Twój urlop na serwerze ${interaction.guild.name} został zakończony.`;
+        await applicant.send(applicantMessage)
+          .catch((error) => console.error(`Nie udało się powiadomić użytkownika ${userId} o zmianie statusu urlopu:`, error));
       }
       return;
     } finally {
@@ -4708,15 +5035,7 @@ client.on("messageCreate", (message) => {
 });
 
 client.on("guildMemberAdd", (member) => {
-  if (!member.user.bot) return;
-  if (member.id === client.user?.id) return;
-
-  member.kick("Automatyczne usuwanie botów z serwera.").catch((error) => {
-    console.error(
-      `Nie udało się wyrzucić bota ${member.user.tag} (${member.id}) z serwera ${member.guild.name} (${member.guild.id}):`,
-      error,
-    );
-  });
+  trackGuildMemberJoin(member);
 });
 
 client.on("voiceStateUpdate", (oldState, newState) => {
@@ -4759,6 +5078,10 @@ client.on("interactionCreate", async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
       await handleCommand(interaction);
+    } else if (interaction.isRoleSelectMenu() && interaction.customId.startsWith("staff-roster:")) {
+      await handleStaffRosterRoleSelect(interaction);
+    } else if (interaction.isButton() && interaction.customId.startsWith("staff-roster:publish:")) {
+      await handleStaffRosterPublish(interaction);
     } else if (interaction.isButton()) {
       await handleButton(interaction);
     } else if (interaction.isStringSelectMenu() && interaction.customId === "tickets:select") {
