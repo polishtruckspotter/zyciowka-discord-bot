@@ -1684,22 +1684,79 @@ async function handleSetupCommand(interaction) {
   await interaction.reply({ content: `Panel rekrutacji opublikowano na ${panelChannel}; podania będą wysyłane do prywatnego kanału ${applicationsChannel}.`, ephemeral: true });
 }
 
-function makeStaffRosterSetupComponents(userId, roleIdsByCategory = {}) {
-  const rows = staffRosterCategories.map((category) => {
-    const menu = new RoleSelectMenuBuilder()
-      .setCustomId(`staff-roster:${category.key}:${userId}`)
-      .setPlaceholder(`Wybierz role: ${category.title} (${roleIdsByCategory[category.key]?.length ?? 0})`)
-      .setMinValues(1)
-      .setMaxValues(25);
-    return new ActionRowBuilder().addComponents(menu);
+function makeStaffRosterSetupEmbed(session, guild) {
+  const lines = session.roles.map((entry, index) => {
+    const roleName = guild.roles.cache.get(entry.roleId)?.name ?? "Rola niedostępna";
+    const category = staffRosterCategories.find(({ key }) => key === entry.categoryKey);
+    return `${index + 1}. ${roleName} — ${category.title}`;
   });
-  rows.push(new ActionRowBuilder().addComponents(
+  let orderedRoles = "";
+  let omitted = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const next = orderedRoles ? `${orderedRoles}\n${lines[index]}` : lines[index];
+    if (next.length > 3500) {
+      omitted = lines.length - index;
+      break;
+    }
+    orderedRoles = next;
+  }
+  if (omitted) orderedRoles += `\n… i jeszcze ${omitted} ról.`;
+  const selectedRole = session.selectedRoleId
+    ? guild.roles.cache.get(session.selectedRoleId)?.name
+    : null;
+  const selectedCategory = staffRosterCategories.find(({ key }) => key === session.selectedCategoryKey);
+  const description = [
+    "Dodaj role pojedynczo. Pierwsza dodana rola będzie na samej górze; każda kolejna niżej. Wybierz kategorię dla każdej roli.",
+    `**Dodano:** ${session.roles.length}/${maxStaffRosterRoles}`,
+    selectedRole ? `**Wybrana rola:** ${selectedRole}` : null,
+    selectedCategory ? `**Kategoria:** ${selectedCategory.title}` : null,
+    orderedRoles || "Nie dodano jeszcze ról.",
+  ].filter(Boolean).join("\n\n");
+  return new EmbedBuilder()
+    .setColor(0x3498db)
+    .setTitle("Ustaw kolejność ról administracji")
+    .setDescription(description);
+}
+
+function makeStaffRosterSetupComponents(userId, session, guild) {
+  const selectedRoleName = session.selectedRoleId
+    ? guild.roles.cache.get(session.selectedRoleId)?.name
+    : null;
+  const selectedCategory = staffRosterCategories.find(({ key }) => key === session.selectedCategoryKey);
+  const roleMenu = new RoleSelectMenuBuilder()
+    .setCustomId(`staff-roster:role:${userId}`)
+    .setPlaceholder(selectedRoleName ? `Wybrano: ${selectedRoleName}` : `Wybierz rolę nr ${session.roles.length + 1}`)
+    .setMinValues(1)
+    .setMaxValues(1);
+  const categoryMenu = new StringSelectMenuBuilder()
+    .setCustomId(`staff-roster:category:${userId}`)
+    .setPlaceholder(selectedCategory ? `Kategoria: ${selectedCategory.title}` : "Wybierz kategorię tej roli")
+    .addOptions(staffRosterCategories.map(({ key, title }) => ({ label: title, value: key })));
+  const categoriesComplete = staffRosterCategories.every(({ key }) =>
+    session.roles.some((entry) => entry.categoryKey === key),
+  );
+  const actions = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`staff-roster:add:${userId}`)
+      .setLabel(`Dodaj jako pozycję ${session.roles.length + 1}`)
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(!session.selectedRoleId || !session.selectedCategoryKey || session.roles.length >= maxStaffRosterRoles),
+    new ButtonBuilder()
+      .setCustomId(`staff-roster:undo:${userId}`)
+      .setLabel("Usuń ostatnią rolę")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(session.roles.length === 0),
     new ButtonBuilder()
       .setCustomId(`staff-roster:publish:${userId}`)
       .setLabel("Opublikuj zestawienie")
-      .setStyle(ButtonStyle.Success),
-  ));
-  return rows;
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(!categoriesComplete || Boolean(session.selectedRoleId) || Boolean(session.selectedCategoryKey)),
+  );
+  return [
+    new ActionRowBuilder().addComponents(roleMenu),
+    new ActionRowBuilder().addComponents(categoryMenu),
+    actions,
+  ];
 }
 
 async function handleCreateCommand(interaction) {
@@ -1717,38 +1774,112 @@ async function handleCreateCommand(interaction) {
     await interaction.reply({ content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${destination}.`, ephemeral: true });
     return;
   }
-  staffRosterSetupSessions.set(interaction.user.id, {
+  const session = {
     guildId: interaction.guildId,
     destinationChannelId: destination.id,
-    roleIds: Object.fromEntries(staffRosterCategories.map(({ key }) => [key, []])),
+    roles: [],
+    selectedRoleId: null,
+    selectedCategoryKey: null,
     expiresAt: Date.now() + 15 * 60 * 1000,
-  });
+  };
+  staffRosterSetupSessions.set(interaction.user.id, session);
   await interaction.reply({
-    content: `Wybierz co najmniej jedną rolę dla każdej kategorii. Możesz wybrać maksymalnie 40 różnych ról łącznie; nazwa roli będzie pokazana jako pozycja. Zestawienie zostanie wysłane na ${destination}.`,
-    components: makeStaffRosterSetupComponents(interaction.user.id, staffRosterSetupSessions.get(interaction.user.id).roleIds),
+    content: `Wybierz role po kolei i przypisz każdą do kategorii. Zestawienie trafi na ${destination}.`,
+    embeds: [makeStaffRosterSetupEmbed(session, interaction.guild)],
+    components: makeStaffRosterSetupComponents(interaction.user.id, session, interaction.guild),
     ephemeral: true,
   });
 }
 
-async function handleStaffRosterRoleSelect(interaction) {
-  const [, categoryKey, ownerId] = interaction.customId.split(":");
-  const session = staffRosterSetupSessions.get(ownerId);
+async function getStaffRosterSetupSession(interaction, ownerId) {
   if (ownerId !== interaction.user.id) {
-    await interaction.reply({ content: "Tylko administrator, który rozpoczął tę konfigurację, może wybierać role.", ephemeral: true });
-    return;
+    await interaction.reply({ content: "Tylko administrator, który rozpoczął tę konfigurację, może ją zmieniać.", ephemeral: true });
+    return null;
   }
+  const session = staffRosterSetupSessions.get(ownerId);
   if (!session || session.expiresAt <= Date.now() || session.guildId !== interaction.guildId ||
-      !staffRosterCategories.some(({ key }) => key === categoryKey)) {
+      !interaction.guild) {
     staffRosterSetupSessions.delete(ownerId);
     await interaction.reply({ content: "Ta konfiguracja zestawienia wygasła. Uruchom ponownie `/stworz nasza adm`.", ephemeral: true });
+    return null;
+  }
+  return session;
+}
+
+async function handleStaffRosterRoleSelect(interaction) {
+  const [, , ownerId] = interaction.customId.split(":");
+  const session = await getStaffRosterSetupSession(interaction, ownerId);
+  if (!session) return;
+  if (session.roles.length >= maxStaffRosterRoles) {
+    await interaction.reply({ content: `Osiągnięto limit ${maxStaffRosterRoles} ról. Usuń ostatnią rolę, jeśli chcesz zmienić zestawienie.`, ephemeral: true });
     return;
   }
-  session.roleIds[categoryKey] = interaction.values;
+  const roleId = interaction.values[0];
+  const role = interaction.guild.roles.cache.get(roleId);
+  if (!role || role.id === interaction.guild.id || role.managed) {
+    await interaction.reply({ content: "Wybierz zwykłą rolę z tego serwera, nie rolę @everyone ani rolę integracji.", ephemeral: true });
+    return;
+  }
+  if (session.roles.some((entry) => entry.roleId === roleId)) {
+    await interaction.reply({ content: "Ta rola jest już dodana. Każdą rolę można dodać tylko raz.", ephemeral: true });
+    return;
+  }
+  session.selectedRoleId = roleId;
   session.expiresAt = Date.now() + 15 * 60 * 1000;
-  const selectedCount = Object.values(session.roleIds).reduce((total, roleIds) => total + roleIds.length, 0);
   await interaction.update({
-    content: `Wybrano ${selectedCount} ról z limitu ${maxStaffRosterRoles}. Wybierz role dla każdej z trzech kategorii, a następnie opublikuj zestawienie.`,
-    components: makeStaffRosterSetupComponents(interaction.user.id, session.roleIds),
+    content: `Wybierz kategorię dla roli **${role.name}**, a następnie dodaj ją jako pozycję ${session.roles.length + 1}.`,
+    embeds: [makeStaffRosterSetupEmbed(session, interaction.guild)],
+    components: makeStaffRosterSetupComponents(interaction.user.id, session, interaction.guild),
+  });
+}
+
+async function handleStaffRosterCategorySelect(interaction) {
+  const [, , ownerId] = interaction.customId.split(":");
+  const session = await getStaffRosterSetupSession(interaction, ownerId);
+  if (!session) return;
+  session.selectedCategoryKey = interaction.values[0];
+  session.expiresAt = Date.now() + 15 * 60 * 1000;
+  await interaction.update({
+    content: session.selectedRoleId
+      ? `Rola **${interaction.guild.roles.cache.get(session.selectedRoleId)?.name ?? "niedostępna"}** będzie na pozycji ${session.roles.length + 1}. Dodaj ją albo zmień wybór.`
+      : `Wybrano kategorię **${staffRosterCategories.find(({ key }) => key === session.selectedCategoryKey).title}**. Najpierw wybierz rolę.`,
+    embeds: [makeStaffRosterSetupEmbed(session, interaction.guild)],
+    components: makeStaffRosterSetupComponents(interaction.user.id, session, interaction.guild),
+  });
+}
+
+async function handleStaffRosterAdd(interaction) {
+  const ownerId = interaction.customId.split(":")[2];
+  const session = await getStaffRosterSetupSession(interaction, ownerId);
+  if (!session) return;
+  if (!session.selectedRoleId || !session.selectedCategoryKey || session.roles.length >= maxStaffRosterRoles) {
+    await interaction.reply({ content: "Wybierz jedną rolę i jej kategorię. Maksymalnie można dodać 40 ról.", ephemeral: true });
+    return;
+  }
+  session.roles.push({ roleId: session.selectedRoleId, categoryKey: session.selectedCategoryKey });
+  session.selectedRoleId = null;
+  session.selectedCategoryKey = null;
+  session.expiresAt = Date.now() + 15 * 60 * 1000;
+  await interaction.update({
+    content: `Dodano pozycję ${session.roles.length}. Następna rola będzie pozycją ${session.roles.length + 1}.`,
+    embeds: [makeStaffRosterSetupEmbed(session, interaction.guild)],
+    components: makeStaffRosterSetupComponents(interaction.user.id, session, interaction.guild),
+  });
+}
+
+async function handleStaffRosterUndo(interaction) {
+  const ownerId = interaction.customId.split(":")[2];
+  const session = await getStaffRosterSetupSession(interaction, ownerId);
+  if (!session) return;
+  const removed = session.roles.pop();
+  session.selectedRoleId = null;
+  session.selectedCategoryKey = null;
+  session.expiresAt = Date.now() + 15 * 60 * 1000;
+  const removedRole = removed ? interaction.guild.roles.cache.get(removed.roleId)?.name ?? "rola niedostępna" : null;
+  await interaction.update({
+    content: removed ? `Usunięto ostatnią pozycję: **${removedRole}**. Wybierz ponownie rolę i kategorię.` : "Nie ma żadnej dodanej roli do usunięcia.",
+    embeds: [makeStaffRosterSetupEmbed(session, interaction.guild)],
+    components: makeStaffRosterSetupComponents(interaction.user.id, session, interaction.guild),
   });
 }
 
@@ -1772,36 +1903,25 @@ function limitRosterField(lines) {
 
 async function handleStaffRosterPublish(interaction) {
   const ownerId = interaction.customId.split(":")[2];
-  const session = staffRosterSetupSessions.get(ownerId);
-  if (ownerId !== interaction.user.id) {
-    await interaction.reply({ content: "Tylko administrator, który rozpoczął tę konfigurację, może ją opublikować.", ephemeral: true });
-    return;
-  }
-  if (!session || session.expiresAt <= Date.now() || session.guildId !== interaction.guildId) {
-    staffRosterSetupSessions.delete(ownerId);
-    await interaction.reply({ content: "Ta konfiguracja zestawienia wygasła. Uruchom ponownie `/stworz nasza adm`.", ephemeral: true });
-    return;
-  }
+  const session = await getStaffRosterSetupSession(interaction, ownerId);
+  if (!session) return;
   await interaction.deferUpdate();
-  const roleIds = Object.values(session.roleIds).flat();
-  const uniqueRoleIds = new Set(roleIds);
-  if (staffRosterCategories.some(({ key }) => session.roleIds[key].length === 0)) {
-    await interaction.editReply({ content: "Wybierz co najmniej jedną rolę dla każdej z trzech kategorii.", components: makeStaffRosterSetupComponents(interaction.user.id, session.roleIds) });
-    return;
-  }
-  if (uniqueRoleIds.size > maxStaffRosterRoles) {
-    await interaction.editReply({ content: `Wybrano ${uniqueRoleIds.size} różnych ról. Limit wynosi ${maxStaffRosterRoles}; usuń część ról i spróbuj ponownie.`, components: makeStaffRosterSetupComponents(interaction.user.id, session.roleIds) });
-    return;
-  }
-  if (uniqueRoleIds.size !== roleIds.length) {
-    await interaction.editReply({ content: "Ta sama rola nie może należeć do kilku kategorii. Popraw wybór przed publikacją.", components: makeStaffRosterSetupComponents(interaction.user.id, session.roleIds) });
+  const categoriesComplete = staffRosterCategories.every(({ key }) =>
+    session.roles.some((entry) => entry.categoryKey === key),
+  );
+  if (!categoriesComplete || session.selectedRoleId || session.selectedCategoryKey || session.roles.length === 0) {
+    await interaction.editReply({
+      content: "Dodaj wybraną rolę i upewnij się, że każda z trzech kategorii ma co najmniej jedną rolę.",
+      embeds: [makeStaffRosterSetupEmbed(session, interaction.guild)],
+      components: makeStaffRosterSetupComponents(interaction.user.id, session, interaction.guild),
+    });
     return;
   }
 
   const guild = interaction.guild;
   await guild.roles.fetch();
   const selectedRoles = new Map();
-  for (const roleId of uniqueRoleIds) {
+  for (const { roleId } of session.roles) {
     const role = guild.roles.cache.get(roleId);
     if (!role || role.id === guild.id || role.managed) {
       await interaction.editReply({ content: "Jedna z wybranych ról nie istnieje albo jest zarządzana przez integrację. Uruchom ponownie `/stworz nasza adm` i wybierz role serwera.", components: [] });
@@ -1827,21 +1947,23 @@ async function handleStaffRosterPublish(interaction) {
   const members = await guild.members.fetch();
   const memberIds = new Set();
   const fields = staffRosterCategories.map((category) => {
-    const categoryRoles = session.roleIds[category.key]
-      .map((roleId) => selectedRoles.get(roleId))
-      .sort((left, right) => right.comparePositionTo(left));
+    const categoryRoles = session.roles
+      .map((entry, index) => ({ ...entry, position: index + 1, role: selectedRoles.get(entry.roleId) }))
+      .filter((entry) => entry.categoryKey === category.key);
     const lines = [];
-    for (const role of categoryRoles) {
+    for (const entry of categoryRoles) {
+      const roleName = entry.role.name.replace(/([*_`~|])/g, "\\$1");
       const roleMembers = members
-        .filter((member) => !member.user.bot && member.roles.cache.has(role.id))
+        .filter((member) => !member.user.bot && member.roles.cache.has(entry.role.id))
         .sort((left, right) => left.displayName.localeCompare(right.displayName, "pl"));
+      lines.push(`**${entry.position}. ${roleName}**`);
       if (roleMembers.size === 0) {
-        lines.push(`• **${role.name.replace(/([*_`~|])/g, "\\$1")}** — brak członków`);
+        lines.push("— brak członków");
         continue;
       }
       for (const member of roleMembers.values()) {
         memberIds.add(member.id);
-        lines.push(`• <@${member.id}> — **${role.name.replace(/([*_`~|])/g, "\\$1")}**`);
+        lines.push(`• <@${member.id}>`);
       }
     }
     return {
@@ -1852,13 +1974,13 @@ async function handleStaffRosterPublish(interaction) {
   const embed = new EmbedBuilder()
     .setColor(0x3498db)
     .setTitle("Skład administracji")
-    .setDescription(`Członkowie serwera posiadający wybrane role. Nazwa roli oznacza pozycję; kategoria wskazuje przynależność do grupy.\n**Role:** ${uniqueRoleIds.size} · **Osoby:** ${memberIds.size}`)
+    .setDescription(`Kolejność jest ustawiona ręcznie: pozycja 1 jest najwyżej, a każda następna niżej. Członkowie są pokazani pod każdą posiadaną pozycją.\n**Role:** ${session.roles.length} · **Osoby:** ${memberIds.size}`)
     .addFields(fields)
     .setTimestamp();
 
   await updateWebhookConfig(guild.id, {
     staffRosterConfig: {
-      categories: session.roleIds,
+      roles: session.roles,
       destinationChannelId: destination.id,
     },
   });
@@ -5080,6 +5202,12 @@ client.on("interactionCreate", async (interaction) => {
       await handleCommand(interaction);
     } else if (interaction.isRoleSelectMenu() && interaction.customId.startsWith("staff-roster:")) {
       await handleStaffRosterRoleSelect(interaction);
+    } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith("staff-roster:category:")) {
+      await handleStaffRosterCategorySelect(interaction);
+    } else if (interaction.isButton() && interaction.customId.startsWith("staff-roster:add:")) {
+      await handleStaffRosterAdd(interaction);
+    } else if (interaction.isButton() && interaction.customId.startsWith("staff-roster:undo:")) {
+      await handleStaffRosterUndo(interaction);
     } else if (interaction.isButton() && interaction.customId.startsWith("staff-roster:publish:")) {
       await handleStaffRosterPublish(interaction);
     } else if (interaction.isButton()) {
