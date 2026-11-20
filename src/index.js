@@ -409,6 +409,92 @@ function randomInteger(minimum, maximum) {
   return Math.floor(Math.random() * (maximum - minimum + 1)) + minimum;
 }
 
+function pickRandom(items) {
+  return items[randomInteger(0, items.length - 1)];
+}
+
+function normalizePolishText(value) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pl-PL");
+}
+
+function createBotMentionReply(message) {
+  const content = normalizePolishText(message.content.replace(/<@!?\d+>/g, " ").trim());
+  const hasImage = message.attachments.some((attachment) =>
+    attachment.contentType?.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/i.test(attachment.name ?? ""),
+  ) || message.embeds.some((embed) => embed.image || embed.thumbnail);
+
+  if (message.channelId === codeInformationChannelId && isPolishCodeQuestion(content)) {
+    return "Kod to `1fid26k3` — miłej zabawy w grze! 🎮";
+  }
+
+  const asksForRating = /\b(ocen\w*|ocena|ocenke|rating|ile\s*\/\s*10|na\s*ile)\b/.test(content);
+  if (hasImage && asksForRating) {
+    const rating = randomInteger(0, 10);
+    const reaction = rating >= 8 ? "🔥✨" : rating >= 5 ? "😎📸" : rating >= 1 ? "🙂🎨" : "💀😂";
+    const comments = rating >= 8
+      ? ["mocny sztos!", "naprawdę siadło!", "robi wrażenie!"]
+      : rating >= 5
+        ? ["całkiem spoko!", "jest potencjał!", "na plusik!"]
+        : rating >= 1
+          ? ["ma swój klimat 😅", "jeszcze da się podkręcić!", "tym razem trochę mniej 😄"]
+          : ["odważnie poszło 😂", "to chyba rekord w drugą stronę 💀", "zero punktów, ale za odwagę plusik 😭"];
+    return `Dałbym **${rating}/10** — ${pickRandom(comments)} ${reaction}`;
+  }
+
+  if (hasImage) {
+    return pickRandom([
+      "Widzę obrazek 📸 Chcesz ocenę, opinię czy mam coś konkretnego sprawdzić?",
+      "O, zdjęcie! 👀 Co mam o nim powiedzieć?",
+      "Mam obrazek 😎 Daj znać, czy mam go ocenić, czy pomóc z czymś innym.",
+    ]);
+  }
+
+  if (/\b(co\s+sadzisz|co\s+myslisz|jak\s+oceniasz|twoja\s+opinia|co\s+o\s+tym)\b/.test(content)) {
+    if (/\b(serwer|discord|spolecznosc|ekipa)\b/.test(content)) {
+      return pickRandom([
+        "Moim zdaniem ma fajny potencjał — klimat robią przede wszystkim ludzie 👀",
+        "Raczej na plus! Zawsze można coś ulepszyć, ale dobra ekipa to podstawa 😎",
+        "Mam mieszane odczucia, ale brzmi ciekawie 🤔✨",
+      ]);
+    }
+    if (/\b(bot|bocie|asystent)\b/.test(content)) {
+      return pickRandom([
+        "Staram się być pomocny i nie przynudzać 😄 Jak mi idzie?",
+        "Myślę, że całkiem spoko ze mnie bot 🤖✨",
+        "Zależy od dnia… ale teraz jestem na tak 😎",
+      ]);
+    }
+    return pickRandom([
+      "Brzmi ciekawie 👀 Ja jestem raczej na tak!",
+      "Mam mieszane odczucia 😅 Co najbardziej ci się w tym podoba?",
+      "Całkiem spoko, ma swój klimat ✨",
+      "Hmm, chyba nie do końca mój styl, ale rozumiem zamysł 🤔",
+      "Daję temu szansę 👍",
+    ]);
+  }
+
+  if (content.includes("?") || /\b(czy|warto|powinienem|powinnam|mam\s+to)\b/.test(content)) {
+    return pickRandom([
+      "Tak, czemu nie? 👍",
+      "Raczej tak 😄",
+      "Nie tym razem 🙈",
+      "Raczej nie 🤔",
+      "Może! Zależy od szczegółów 👀",
+      "Ja bym spróbował 😎",
+    ]);
+  }
+
+  return pickRandom([
+    "Wsp! Co potrzebujesz? 👋",
+    "Siema! Co ogarniamy? 😎",
+    "Hejka! W czym pomóc? ✨",
+    "No siema, dawaj — czego trzeba? 👀",
+    "Jestem! Co tam? 🙂",
+    "Yo! Jak mogę pomóc? 🤖",
+    "Witam witam! Co dla ciebie zrobić? 😄",
+  ]);
+}
+
 function formatCooldown(remainingMs) {
   const minutes = Math.ceil(remainingMs / 60000);
   const hours = Math.floor(minutes / 60);
@@ -5817,7 +5903,13 @@ client.on("messageCreate", async (message) => {
     }
     return;
   }
+  const botWasMentioned =
+    !message.author.bot &&
+    !message.webhookId &&
+    client.user &&
+    message.mentions.users.has(client.user.id);
   if (
+    !botWasMentioned &&
     !message.author.bot &&
     !message.webhookId &&
     message.channelId === codeInformationChannelId &&
@@ -5834,6 +5926,15 @@ client.on("messageCreate", async (message) => {
     if (await handleRestrictedMassMention(message)) return;
   } catch (error) {
     console.error("Nie udało się zastosować reguły anty-masowych oznaczeń:", error);
+    return;
+  }
+  if (botWasMentioned) {
+    await message.reply({
+      content: createBotMentionReply(message),
+      allowedMentions: { parse: [] },
+    }).catch((error) => {
+      console.error("Nie udało się odpowiedzieć na oznaczenie bota:", error);
+    });
     return;
   }
   handleEconomyCommand(message).catch((error) => {
