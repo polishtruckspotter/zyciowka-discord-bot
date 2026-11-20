@@ -206,7 +206,7 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
     .setName("setup-dowody")
-    .setDescription("Publikuje panel wyrabiania dowodu osobistego.")
+    .setDescription("Publikuje panel fikcyjnej karty postaci RP.")
     .addChannelOption((option) =>
       option
         .setName("kanal-dowodow")
