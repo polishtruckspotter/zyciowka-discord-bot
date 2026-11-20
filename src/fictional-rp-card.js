@@ -63,7 +63,7 @@ async function createFictionalRpCardImage({
   context.fillText(`@${profile.username}`, 190, 442, 280);
   context.fillStyle = "#c7d2fe";
   context.font = "18px Arial";
-  context.fillText(`Roblox ID: ${profile.id}`, 190, 474, 290);
+  context.fillText(`ID gracza: ${profile.id}`, 190, 474, 290);
   context.textAlign = "left";
 
   const drawField = (label, value, x, y, width) => {
