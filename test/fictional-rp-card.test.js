@@ -3,7 +3,7 @@ const test = require("node:test");
 const { createCanvas } = require("@napi-rs/canvas");
 const { createFictionalRpCardImage } = require("../src/fictional-rp-card");
 
-test("creates a PNG RP profile card with the expected dimensions", async () => {
+test("fills the fictional RP ID template and preserves its dimensions", async () => {
   const avatarCanvas = createCanvas(64, 64);
   const avatarContext = avatarCanvas.getContext("2d");
   avatarContext.fillStyle = "#4f46e5";
@@ -21,6 +21,6 @@ test("creates a PNG RP profile card with the expected dimensions", async () => {
   });
 
   assert.equal(card.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
-  assert.equal(card.readUInt32BE(16), 1200);
-  assert.equal(card.readUInt32BE(20), 700);
+  assert.equal(card.readUInt32BE(16), 1024);
+  assert.equal(card.readUInt32BE(20), 354);
 });
