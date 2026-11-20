@@ -24,6 +24,8 @@ const {
   UserSelectMenuBuilder,
 } = require("discord.js");
 const { commands } = require("./commands");
+const { isPolishCodeQuestion } = require("./code-question");
+const { createFictionalRpCardImage } = require("./fictional-rp-card");
 
 const client = new Client({
   intents: [
@@ -87,6 +89,7 @@ const weaponPermitApplications = new Map();
 const weaponPermitDecisionLocks = new Set();
 const weaponPermitIdentityRequestLocks = new Set();
 const botKickChannelQueues = new Map();
+const idCardDrafts = new Map();
 const mafiaDecisionLocks = new Set();
 const weaponPermitApplicationTimeoutMs = 15 * 60 * 1000;
 const roleChangeLogChannelId = "1561435547946197108";
@@ -95,6 +98,7 @@ const weaponPermitPublicationChannelId = "1561435546876907696";
 const vehicleRegistrationChannelId = "1561435546876907693";
 const vehicleRegistrationInstructionsChannelId = "1561440076213387354";
 const idCardSearchChannelId = "1561435546876907694";
+const codeInformationChannelId = "1561435546365067373";
 const noMassMentionRoleId = "1561435544993665153";
 const commandGuildId = process.env.GUILD_ID || "1561435544930623619";
 const praiseLogChannelIds = {
@@ -1764,7 +1768,8 @@ async function findUserRecordMessages(channel, userId, recordType) {
               (hasUserField("Członek Discord") || mentionsUser)
             : embeds.some(
                 (embed) =>
-                  embed.title?.startsWith("Dowód osobisty -") &&
+                (embed.title?.startsWith("Dowód osobisty -") ||
+                  embed.title?.startsWith("FIKCYJNA karta RP -")) &&
                   (hasUserField("Użytkownik Discord") || mentionsUser),
               );
 
@@ -3236,19 +3241,19 @@ async function handleCommand(interaction) {
     await updateWebhookConfig(interaction.guildId, { idCardChannelId: destination.id });
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
-      .setTitle("Dowody osobiste")
-      .setDescription("Kliknij przycisk poniżej, aby wyrobić dowód osobisty.")
-      .setFooter({ text: "Dowody osobiste × Polonia RP" });
+      .setTitle("Fikcyjna karta postaci RP")
+      .setDescription("Kliknij przycisk poniżej, aby utworzyć **FIKCYJNĄ** kartę postaci dla Polonia RP.")
+      .setFooter({ text: "FIKCYJNA KARTA RP — NIE JEST DOKUMENTEM" });
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`create-id-card:${destination.id}`)
-        .setLabel("Wyrób dowód osobisty")
+        .setLabel("Utwórz fikcyjną kartę RP")
         .setStyle(ButtonStyle.Primary),
     );
 
     await interaction.channel.send({ embeds: [embed], components: [row] });
     await interaction.reply({
-      content: `Panel dowodów został opublikowany. Gotowe dowody będą wysyłane na kanał ${destination}.`,
+      content: `Panel fikcyjnych kart RP został opublikowany. Gotowe karty będą wysyłane na kanał ${destination}.`,
       ephemeral: true,
     });
     return;
@@ -4741,14 +4746,14 @@ async function handleButton(interaction) {
   if (interaction.customId.startsWith("create-id-card:")) {
     const destinationId = interaction.customId.slice("create-id-card:".length);
     const modal = new ModalBuilder()
-      .setCustomId(`submit-id-card:${destinationId}`)
-      .setTitle("Dowód osobisty");
+      .setCustomId(`submit-id-card-details:${destinationId}`)
+      .setTitle("FIKCYJNA karta RP — krok 1");
     const fields = [
-      ["full-name", "Imię i nazwisko", TextInputStyle.Short, 2, 100],
-      ["age", "Wiek", TextInputStyle.Short, 1, 3],
+      ["surname", "Nazwisko", TextInputStyle.Short, 1, 60],
+      ["given-names", "Imiona", TextInputStyle.Short, 1, 100],
+      ["date-of-birth", "Data urodzenia", TextInputStyle.Short, 1, 20],
       ["gender", "Płeć", TextInputStyle.Short, 1, 40],
-      ["citizenship", "Obywatelstwo", TextInputStyle.Short, 2, 60],
-      ["roblox-id", "Roblox ID lub @nazwa", TextInputStyle.Short, 1, 21],
+      ["citizenship", "Obywatelstwo / kraj pochodzenia", TextInputStyle.Short, 2, 60],
     ].map(([id, label, style, minLength, maxLength]) =>
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
@@ -4761,6 +4766,44 @@ async function handleButton(interaction) {
       ),
     );
     modal.addComponents(...fields);
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (interaction.customId.startsWith("continue-id-card:")) {
+    const [, destinationId, ownerId] = interaction.customId.split(":");
+    const draftKey = `${interaction.guildId}:${ownerId}:${destinationId}`;
+    const draft = idCardDrafts.get(draftKey);
+    if (interaction.user.id !== ownerId) {
+      await interaction.reply({
+        content: "Ten formularz należy do innego użytkownika.",
+        ephemeral: true,
+      });
+      return;
+    }
+    if (!draft || draft.expiresAt < Date.now()) {
+      idCardDrafts.delete(draftKey);
+      await interaction.reply({
+        content: "Formularz wygasł. Kliknij panel karty RP i rozpocznij ponownie.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`submit-id-card:${destinationId}:${ownerId}`)
+      .setTitle("FIKCYJNA karta RP — krok 2");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("roblox-id")
+          .setLabel("Roblox ID lub @nazwa")
+          .setStyle(TextInputStyle.Short)
+          .setMinLength(1)
+          .setMaxLength(21)
+          .setRequired(true),
+      ),
+    );
     await interaction.showModal(modal);
     return;
   }
@@ -5538,52 +5581,100 @@ async function handleModal(interaction) {
     return;
   }
 
-  if (interaction.customId.startsWith("submit-id-card:")) {
-    const destinationId = interaction.customId.slice("submit-id-card:".length);
-    const destination = await interaction.guild.channels.fetch(destinationId);
-    if (!destination?.isTextBased() || destination.type !== ChannelType.GuildText) {
-      throw new Error("Kanał docelowy nie istnieje albo nie jest kanałem tekstowym.");
-    }
-
-    const fullName = interaction.fields.getTextInputValue("full-name").trim();
-    const ageText = interaction.fields.getTextInputValue("age").trim();
+  if (interaction.customId.startsWith("submit-id-card-details:")) {
+    const destinationId = interaction.customId.slice("submit-id-card-details:".length);
+    const surname = interaction.fields.getTextInputValue("surname").trim();
+    const givenNames = interaction.fields.getTextInputValue("given-names").trim();
+    const dateOfBirth = interaction.fields.getTextInputValue("date-of-birth").trim();
     const gender = interaction.fields.getTextInputValue("gender").trim();
     const citizenship = interaction.fields.getTextInputValue("citizenship").trim();
-    const robloxIdentity = interaction.fields.getTextInputValue("roblox-id").trim();
-    const age = Number(ageText);
-    if (!/^\d+$/.test(ageText) || !Number.isInteger(age) || age < 1 || age > 120) {
+    const draftKey = `${interaction.guildId}:${interaction.user.id}:${destinationId}`;
+    idCardDrafts.set(draftKey, {
+      destinationId,
+      guildId: interaction.guildId,
+      surname,
+      givenNames,
+      dateOfBirth,
+      gender,
+      citizenship,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`continue-id-card:${destinationId}:${interaction.user.id}`)
+        .setLabel("Dalej: konto Roblox")
+        .setStyle(ButtonStyle.Primary),
+    );
+    await interaction.reply({
+      content: "Dane karty zapisane. Kliknij przycisk, aby dodać konto Roblox.",
+      components: [row],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (interaction.customId.startsWith("submit-id-card:")) {
+    const [, destinationId, ownerId] = interaction.customId.split(":");
+    if (interaction.user.id !== ownerId) {
       await interaction.reply({
-        content: "Wiek musi być liczbą od 1 do 120. Kliknij przycisk, aby wypełnić formularz ponownie.",
+        content: "Ten formularz należy do innego użytkownika.",
         ephemeral: true,
       });
       return;
     }
+
+    const robloxIdentity = interaction.fields.getTextInputValue("roblox-id").trim();
+    const draftKey = `${interaction.guildId}:${interaction.user.id}:${destinationId}`;
+    const draft = idCardDrafts.get(draftKey);
+    if (!draft || draft.expiresAt < Date.now()) {
+      idCardDrafts.delete(draftKey);
+      await interaction.reply({
+        content: "Formularz wygasł. Kliknij panel karty RP i rozpocznij ponownie.",
+        ephemeral: true,
+      });
+      return;
+    }
+
     await interaction.deferReply({ ephemeral: true });
+    const destination = await interaction.guild.channels.fetch(destinationId);
+    if (!destination?.isTextBased() || destination.type !== ChannelType.GuildText) {
+      throw new Error("Kanał docelowy nie istnieje albo nie jest kanałem tekstowym.");
+    }
     const profile = await getRobloxProfileFromIdentity(robloxIdentity);
     const profileUrl = `https://www.roblox.com/users/${profile.id}/profile`;
+    const issueDate = new Intl.DateTimeFormat("pl-PL", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      timeZone: "Europe/Warsaw",
+    }).format(new Date());
+    const cardImage = await createFictionalRpCardImage({
+      profile,
+      surname: draft.surname,
+      givenNames: draft.givenNames,
+      dateOfBirth: draft.dateOfBirth,
+      gender: draft.gender,
+      citizenship: draft.citizenship,
+      issueDate,
+    });
+    const attachment = new AttachmentBuilder(cardImage, { name: "fictional-rp-card.png" });
     const card = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setTitle(`Dowód osobisty - ${profile.username}`)
+      .setColor(0x312e81)
+      .setTitle(`FIKCYJNA karta RP - ${profile.username}`)
       .setURL(profileUrl)
-      .addFields(
-        { name: "Imię i nazwisko", value: fullName },
-        { name: "Wiek", value: ageText },
-        { name: "Płeć", value: gender },
-        { name: "Obywatelstwo", value: citizenship },
-        { name: "Użytkownik Discord", value: `<@${interaction.user.id}>` },
-        { name: "Konto Roblox", value: `[@${profile.username}](${profileUrl})` },
-        { name: "ID Roblox", value: `[${profile.id}](${profileUrl})` },
-      )
-      .setThumbnail(profile.imageUrl)
-      .setFooter({ text: "Dowody osobiste × Polonia RP" });
+      .setImage("attachment://fictional-rp-card.png")
+      .setFooter({ text: "FIKCYJNA KARTA ROLEPLAY — NIE JEST DOKUMENTEM TOŻSAMOŚCI" });
 
     await destination.send({
-      content: `<@${interaction.user.id}> Twój dowód osobisty został opublikowany.`,
+      content: `<@${interaction.user.id}> Twoja fikcyjna karta postaci RP jest gotowa.`,
       embeds: [card],
+      files: [attachment],
       allowedMentions: { parse: [], users: [interaction.user.id] },
     });
+    idCardDrafts.delete(draftKey);
     await updateWebhookConfig(interaction.guildId, { idCardChannelId: destination.id });
-    await interaction.editReply({ content: `Dowód osobisty został wysłany na kanał ${destination}.` });
+    await interaction.editReply({ content: `Fikcyjna karta RP została wysłana na kanał ${destination}.` });
     return;
   }
 
@@ -5725,6 +5816,19 @@ client.on("messageCreate", async (message) => {
       });
     }
     return;
+  }
+  if (
+    !message.author.bot &&
+    !message.webhookId &&
+    message.channelId === codeInformationChannelId &&
+    isPolishCodeQuestion(message.content)
+  ) {
+    await message.reply({
+      content: "Kod to `1fid26k3` — miłej zabawy w grze! 🎮",
+      allowedMentions: { parse: [] },
+    }).catch((error) => {
+      console.error("Nie udało się odpowiedzieć na pytanie o kod:", error);
+    });
   }
   try {
     if (await handleRestrictedMassMention(message)) return;
