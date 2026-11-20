@@ -13,9 +13,33 @@ async function createFictionalRpCardImage({
   issueDate,
 }) {
   const template = await loadImage(templatePath);
+  const avatarResponse = await fetch(profile.imageUrl, {
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!avatarResponse.ok) {
+    throw new Error(`Nie udało się pobrać awatara Roblox (HTTP ${avatarResponse.status}).`);
+  }
+  const avatarBuffer = Buffer.from(await avatarResponse.arrayBuffer());
+  if (avatarBuffer.length > 5 * 1024 * 1024) {
+    throw new Error("Pobrany awatar Roblox przekracza dozwolony rozmiar.");
+  }
+  const avatar = await loadImage(avatarBuffer);
   const canvas = createCanvas(template.width, template.height);
   const context = canvas.getContext("2d");
   context.drawImage(template, 0, 0);
+
+  // Fit the Roblox avatar into the open portrait area beside the name fields.
+  context.save();
+  context.beginPath();
+  context.arc(127, 198, 52, 0, Math.PI * 2);
+  context.clip();
+  context.drawImage(avatar, 75, 146, 104, 104);
+  context.restore();
+  context.beginPath();
+  context.arc(127, 198, 52, 0, Math.PI * 2);
+  context.strokeStyle = "rgba(255,255,255,0.9)";
+  context.lineWidth = 3;
+  context.stroke();
 
   const drawValue = (value, x, y, maxWidth, fontSize = 15) => {
     context.fillStyle = "#151515";
