@@ -31,12 +31,12 @@ async function createFictionalRpCardImage({
   // Fit the Roblox avatar into the open portrait area beside the name fields.
   context.save();
   context.beginPath();
-  context.arc(127, 198, 52, 0, Math.PI * 2);
+  context.arc(127, 198, 64, 0, Math.PI * 2);
   context.clip();
-  context.drawImage(avatar, 75, 146, 104, 104);
+  context.drawImage(avatar, 63, 134, 128, 128);
   context.restore();
   context.beginPath();
-  context.arc(127, 198, 52, 0, Math.PI * 2);
+  context.arc(127, 198, 64, 0, Math.PI * 2);
   context.strokeStyle = "rgba(255,255,255,0.9)";
   context.lineWidth = 3;
   context.stroke();
