@@ -5672,6 +5672,10 @@ async function handleModal(interaction) {
       files: [attachment],
       allowedMentions: { parse: [], users: [interaction.user.id] },
     });
+    await destination.send({
+      content: "-# FIKCYJNA KARTA ROLEPLAY — NIE JEST DOKUMENTEM TOŻSAMOŚCI",
+      allowedMentions: { parse: [] },
+    });
     idCardDrafts.delete(draftKey);
     await updateWebhookConfig(interaction.guildId, { idCardChannelId: destination.id });
     await interaction.editReply({ content: `Fikcyjna karta RP została wysłana na kanał ${destination}.` });
