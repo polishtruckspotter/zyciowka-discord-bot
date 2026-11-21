@@ -35,17 +35,17 @@ async function createWeaponPermitCardImage({ profile, fullName, birthDetails, ad
   // Keep the account ID below the template's printed label and above the seal.
   drawValue(profile.id, 1210, 382, 260, 21, "center");
 
-  // Replace the eagle in the seal with the Roblox avatar while keeping the red rim visible.
+  // Put the Roblox portrait in the blank left column, separate from the printed seal and fields.
   context.save();
   context.beginPath();
-  context.arc(1210, 565, 128, 0, Math.PI * 2);
+  context.arc(250, 432, 112, 0, Math.PI * 2);
   context.clip();
-  context.drawImage(avatar, 1082, 437, 256, 256);
+  context.drawImage(avatar, 138, 320, 224, 224);
   context.restore();
   context.beginPath();
-  context.arc(1210, 565, 128, 0, Math.PI * 2);
+  context.arc(250, 432, 112, 0, Math.PI * 2);
   context.strokeStyle = "rgba(255,255,255,0.95)";
-  context.lineWidth = 6;
+  context.lineWidth = 5;
   context.stroke();
 
   drawValue(profile.displayName || profile.username, 125, 692, 320, 21);
