@@ -655,7 +655,11 @@ async function generateWithBotAiProvider(provider, conversationHistory, onPartia
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(`${provider.name} API HTTP ${response.status}: ${payload.error?.message || payload.message || "request failed"}`);
+    const error = new Error(`${provider.name} API HTTP ${response.status}: ${payload.error?.message || payload.message || "request failed"}`);
+    error.status = response.status;
+    const retryAfterSeconds = Number(response.headers.get("retry-after"));
+    if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) error.retryAfterMs = retryAfterSeconds * 1000;
+    throw error;
   }
   if (!response.body) throw new Error(`${provider.name} API returned no response stream.`);
 
@@ -726,12 +730,32 @@ async function generateBotMentionReply(message, previousBotReply = "", conversat
   }
 
   let lastError;
-  for (const provider of providers) {
+  const providerQueue = providers.map((provider) => ({ provider, delayMs: 0 }));
+  const unusableProviders = new Set();
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const next = providerQueue.shift();
+    if (!next) break;
+    const { provider, delayMs } = next;
+    if (unusableProviders.has(provider.id)) continue;
+    if (delayMs) {
+      console.warn(`${provider.name} chwilowo nie odpowiada; ponawiam próbę ${attempt + 1}/4 za ${delayMs} ms.`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
     try {
       return await generateWithBotAiProvider(provider, conversationHistory, onPartialReply);
     } catch (error) {
       lastError = error;
-      console.error(`Nie udało się użyć ${provider.name}; sprawdzam kolejnego dostawcę AI:`, error);
+      const retryableStatus = !error.status || error.status === 408 || error.status >= 500;
+      const shortRateLimit = error.status === 429 && error.retryAfterMs > 0 && error.retryAfterMs <= 1500;
+      const canRetry = attempt < 3 && (retryableStatus || shortRateLimit);
+      if (canRetry) {
+        const delayMs = Math.min(error.retryAfterMs || 350 * (2 ** attempt), 1500);
+        providerQueue.push({ provider, delayMs });
+        console.warn(`${provider.name} chwilowo nie odpowiada; sprawdzę dostępnego dostawcę, a potem ponowię próbę.`);
+      } else {
+        unusableProviders.add(provider.id);
+        console.error(`Nie udało się użyć ${provider.name}; przechodzę do kolejnego dostawcy AI:`, error);
+      }
     }
   }
   throw lastError ?? new Error("Żaden dostawca AI nie jest skonfigurowany.");
