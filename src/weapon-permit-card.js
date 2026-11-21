@@ -32,24 +32,36 @@ async function createWeaponPermitCardImage({ profile, fullName, birthDetails, ad
   drawValue(weaponType, 460, 594, 540);
   drawValue("Polonia RP", 460, 678, 540);
   drawValue(issuedAt, 460, 754, 540);
-  drawValue(profile.id, 1245, 356, 210, 23, "center");
+  // Keep the account ID below the template's printed label and above the seal.
+  drawValue(profile.id, 1210, 382, 260, 21, "center");
 
-  // The template's seal area becomes the permit holder's Roblox portrait.
+  // Replace the eagle in the seal with the Roblox avatar while keeping the red rim visible.
   context.save();
   context.beginPath();
-  context.arc(1208, 564, 106, 0, Math.PI * 2);
+  context.arc(1210, 565, 128, 0, Math.PI * 2);
   context.clip();
-  context.drawImage(avatar, 1102, 458, 212, 212);
+  context.drawImage(avatar, 1082, 437, 256, 256);
   context.restore();
   context.beginPath();
-  context.arc(1208, 564, 106, 0, Math.PI * 2);
-  context.strokeStyle = "rgba(255,255,255,0.9)";
-  context.lineWidth = 4;
+  context.arc(1210, 565, 128, 0, Math.PI * 2);
+  context.strokeStyle = "rgba(255,255,255,0.95)";
+  context.lineWidth = 6;
   context.stroke();
 
-  drawValue(profile.displayName || profile.username, 125, 701, 320, 21);
+  drawValue(profile.displayName || profile.username, 125, 692, 320, 21);
   drawValue(issuerName, 1195, 801, 250, 21, "center");
-  drawValue(`RP-${profile.id}`, 735, 929, 400, 30, "center");
+
+  // Cover the preprinted placeholder and draw one readable RP card number.
+  context.save();
+  context.fillStyle = "#f5e8c9";
+  context.beginPath();
+  context.roundRect(542, 875, 386, 78, 8);
+  context.fill();
+  context.strokeStyle = "rgba(80,60,20,0.28)";
+  context.lineWidth = 2;
+  context.stroke();
+  context.restore();
+  drawValue(`LB ${String(profile.id).slice(-8).padStart(8, "0")}`, 735, 929, 360, 32, "center");
 
   // Make the roleplay-only status visible on the card itself.
   context.save();
