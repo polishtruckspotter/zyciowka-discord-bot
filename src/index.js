@@ -547,14 +547,22 @@ function createBotMentionReply(message, previousContext = null, previousBotReply
     ]);
   }
 
+  if (/\b(co\s+porabiasz|co\s+robisz|co\s+teraz\s+robisz)\b/.test(content)) {
+    return pickRandom([
+      "Właśnie gadam z Tobą 😄 A Ty co dziś robisz?",
+      "Odpisuję na Discordzie i dotrzymuję Ci towarzystwa 😎",
+      "Jestem tutaj i chętnie pogadam 🙂",
+    ]);
+  }
+
+  if (/\b(jak\s+tam|jak\s+sie\s+masz|co\s+tam)\b/.test(content)) {
+    return "U mnie dobrze, dzięki 😄 A co u Ciebie?";
+  }
+
   if (content.includes("?") || /\b(czy|warto|powinienem|powinnam|mam\s+to)\b/.test(content)) {
     return pickRandom([
-      "Tak, czemu nie? 👍",
-      "Raczej tak 😄",
-      "Nie tym razem 🙈",
-      "Raczej nie 🤔",
-      "Może! Zależy od szczegółów 👀",
-      "Ja bym spróbował 😎",
+      "Hmm, dobre pytanie 😄 Dopowiesz trochę, o co chodzi?",
+      "Nie chcę strzelać w ciemno 😅 Napisz trochę więcej, a odpowiem konkretnie.",
     ]);
   }
 
@@ -6352,6 +6360,9 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 const missing = getMissingConfiguration(["DISCORD_TOKEN", "CLIENT_ID"]);
+if (!process.env.OPENAI_API_KEY) {
+  console.warn("AI rozmowy są wyłączone: ustaw OPENAI_API_KEY w zmiennych środowiskowych hostingu.");
+}
 if (missing.length) {
   console.error(`Brak wymaganych zmiennych środowiskowych: ${missing.join(", ")}. Skopiuj .env.example do .env i uzupełnij wartości.`);
   process.exitCode = 1;
