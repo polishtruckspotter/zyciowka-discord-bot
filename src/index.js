@@ -455,8 +455,9 @@ function getBotMentionContext(message) {
   return null;
 }
 
-function createBotMentionReply(message, previousContext = null) {
+function createBotMentionReply(message, previousContext = null, previousBotReply = "") {
   const content = normalizePolishText(message.content.replace(/<@!?\d+>/g, " ").trim());
+  const previousReply = normalizePolishText(previousBotReply);
   const mentionedPeople = [...message.mentions.users.values()].filter((user) => user.id !== client.user?.id);
   const hasImage = message.attachments.some((attachment) =>
     attachment.contentType?.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/i.test(attachment.name ?? ""),
@@ -464,6 +465,14 @@ function createBotMentionReply(message, previousContext = null) {
 
   if (message.channelId === codeInformationChannelId && isPolishCodeQuestion(content)) {
     return "Kod to `1fid26k3` — miłej zabawy w grze! 🎮";
+  }
+
+  if (/co (u|tam u) ciebie|jak tam u ciebie/.test(previousReply) && /\b(dobrze|git|spoko|w porzadku|wszystko dobrze)\b/.test(content)) {
+    return pickRandom([
+      "No i super 😄 Co dziś porabiasz?",
+      "To dobrze! Masz jakieś plany na dziś? 🙂",
+      "Ekstra 😎 Co tam u Ciebie słychać?",
+    ]);
   }
 
   // Treat common short greetings as conversation openers, even when they end
@@ -566,9 +575,9 @@ function getPlainBotMentionText(message) {
     .trim();
 }
 
-async function generateBotMentionReply(message) {
+async function generateBotMentionReply(message, previousBotReply = "") {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return createBotMentionReply(message, botMentionConversationContexts.get(`${message.channelId}:${message.author.id}`));
+  if (!apiKey) return createBotMentionReply(message, botMentionConversationContexts.get(`${message.channelId}:${message.author.id}`), previousBotReply);
 
   const normalizedContent = normalizePolishText(getPlainBotMentionText(message));
   if (message.channelId === codeInformationChannelId && isPolishCodeQuestion(normalizedContent)) {
@@ -6120,8 +6129,14 @@ client.on("messageCreate", async (message) => {
     !message.webhookId &&
     client.user &&
     message.mentions.users.has(client.user.id);
+  const referencedMessage =
+    !message.author.bot && !message.webhookId && message.reference?.messageId
+      ? await message.fetchReference().catch(() => null)
+      : null;
+  const isReplyToBot = Boolean(client.user && referencedMessage?.author.id === client.user.id);
+  const shouldBotReply = botWasMentioned || isReplyToBot;
   if (
-    !botWasMentioned &&
+    !shouldBotReply &&
     !message.author.bot &&
     !message.webhookId &&
     message.channelId === codeInformationChannelId &&
@@ -6140,7 +6155,7 @@ client.on("messageCreate", async (message) => {
     console.error("Nie udało się zastosować reguły anty-masowych oznaczeń:", error);
     return;
   }
-  if (botWasMentioned) {
+  if (shouldBotReply) {
     const contextKey = `${message.channelId}:${message.author.id}`;
     const storedContext = botMentionConversationContexts.get(contextKey);
     const previousContext = storedContext && Date.now() - storedContext.createdAt < 10 * 60 * 1000
@@ -6161,10 +6176,10 @@ client.on("messageCreate", async (message) => {
       if (process.env.OPENAI_API_KEY) await message.channel.sendTyping().catch(() => {});
       let reply;
       try {
-        reply = await generateBotMentionReply(message);
+        reply = await generateBotMentionReply(message, isReplyToBot ? referencedMessage.content : "");
       } catch (error) {
         console.error("Nie udało się wygenerować odpowiedzi AI; używam odpowiedzi lokalnej:", error);
-        reply = createBotMentionReply(message, previousContext);
+        reply = createBotMentionReply(message, previousContext, isReplyToBot ? referencedMessage.content : "");
       }
       await message.reply({ content: reply, allowedMentions: { parse: [] } });
     } catch (error) {
