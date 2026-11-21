@@ -26,6 +26,7 @@ const {
 const { commands } = require("./commands");
 const { isPolishCodeQuestion } = require("./code-question");
 const { createFictionalRpCardImage } = require("./fictional-rp-card");
+const { createWeaponPermitCardImage } = require("./weapon-permit-card");
 
 const client = new Client({
   intents: [
@@ -38,10 +39,17 @@ const client = new Client({
   ],
   partials: [Partials.Channel],
 });
+client.on("error", (error) => console.error("Błąd klienta Discord:", error));
+client.on("shardError", (error, shardId) => console.error(`Błąd połączenia Discord na shardzie ${shardId}:`, error));
+client.on("shardReconnecting", (shardId) => console.warn(`Ponawiam połączenie Discord na shardzie ${shardId}.`));
+process.on("unhandledRejection", (reason) => {
+  console.error("Nieobsłużony błąd asynchroniczny; bot pozostaje uruchomiony:", reason);
+});
 const verificationChallenges = new Map();
 const challengeLifetimeMs = 5 * 60 * 1000;
 const waitingRoomPingCooldownMs = 30 * 1000;
 const waitingRoomPingCooldowns = new Map();
+const botMentionConversationContexts = new Map();
 const recruitmentApplications = new Map();
 const recruitmentDecisionLocks = new Set();
 const staffRosterSetupSessions = new Map();
@@ -107,6 +115,9 @@ const praiseLogChannelIds = {
 };
 const weaponPermitQuestions = [
   { key: "Nick Roblox", prompt: "🎮 Nick Roblox:" },
+  { key: "Imię i nazwisko", prompt: "🪪 Jakie fikcyjne imię i nazwisko wpisać na legitymacji? Podaj dane swojej postaci RP, nie prawdziwe dane." },
+  { key: "Data i miejsce urodzenia", prompt: "📅 Podaj fikcyjną datę i miejsce urodzenia swojej postaci RP. To pole jest potrzebne do poprawnego wypełnienia legitymacji; nie podawaj prawdziwych danych." },
+  { key: "Adres stałego pobytu", prompt: "🏠 Podaj fikcyjny adres, pod którym mieszka Twoja postać RP. To pole jest potrzebne do poprawnego wypełnienia legitymacji; nie podawaj swojego prawdziwego adresu." },
   { key: "Nick Discord", prompt: "💬 Nick Discord:" },
   {
     key: "Rodzaj broni",
@@ -192,43 +203,57 @@ async function handleWeaponPermitIdentityAnswer(message) {
   }
   weaponPermitIdentityRequestLocks.add(message.author.id);
   try {
-    const profile = await getRobloxProfileFromIdentity(message.content);
-
-    const guild = await client.guilds.fetch(request.guildId);
-    const permitChannel = await guild.channels.fetch(weaponPermitPublicationChannelId);
-    if (!permitChannel || permitChannel.type !== ChannelType.GuildText) {
-      throw new Error(`Kanał publikacji pozwoleń ${weaponPermitPublicationChannelId} nie istnieje albo nie jest tekstowy.`);
+    const answer = message.content.trim();
+    if (request.stage === "confirm") {
+      const normalized = answer.toLocaleLowerCase("pl");
+      if (["nie", "n", "no"].includes(normalized)) {
+        request.stage = "username";
+        delete request.robloxProfile;
+        await updateWeaponPermitIdentityRequests(async (requests) => { requests[message.author.id] = request; });
+        await message.reply("Wpisz ponownie swoją nazwę Roblox albo ID Roblox.");
+        return true;
+      }
+      if (!["tak", "t", "yes", "y"].includes(normalized)) {
+        await message.reply("Odpowiedz „tak” jeśli to poprawne albo „nie”, aby wpisać konto ponownie.");
+        return true;
+      }
+      const profile = request.robloxProfile;
+      const guild = await client.guilds.fetch(request.guildId);
+      const permitChannel = await guild.channels.fetch(weaponPermitPublicationChannelId);
+      if (!permitChannel || permitChannel.type !== ChannelType.GuildText) {
+        throw new Error(`Kanał publikacji pozwoleń ${weaponPermitPublicationChannelId} nie istnieje albo nie jest tekstowy.`);
+      }
+      const issuedAt = new Intl.DateTimeFormat("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Warsaw" }).format(new Date());
+      const image = await createWeaponPermitCardImage({
+        profile,
+        fullName: request.fullName,
+        birthDetails: request.birthDetails,
+        address: request.address,
+        weaponType: request.weaponType,
+        issuerName: request.issuerName,
+        issuedAt,
+      });
+      const attachment = new AttachmentBuilder(image, { name: "legitymacja-broni-rp.png" });
+      const card = new EmbedBuilder()
+        .setColor(0x2980b9)
+        .setTitle(`Fikcyjna legitymacja broni RP — ${profile.username}`)
+        .setURL(`https://www.roblox.com/users/${profile.id}/profile`)
+        .setImage("attachment://legitymacja-broni-rp.png")
+        .setFooter({ text: "FIKCYJNY DOKUMENT ROLEPLAY — NIE JEST PRAWDZIWYM POZWOLENIEM" });
+      await permitChannel.send({
+        content: `<@${message.author.id}> Twoja fikcyjna legitymacja broni RP jest gotowa.`,
+        embeds: [card], files: [attachment], allowedMentions: { parse: [], users: [message.author.id] },
+      });
+      await updateWeaponPermitIdentityRequests(async (requests) => { delete requests[message.author.id]; });
+      await message.reply("Dziękuję! Twoja fikcyjna legitymacja broni RP została opublikowana.");
+      return true;
     }
 
-    const permitEmbed = new EmbedBuilder()
-      .setColor(0x2ecc71)
-      .setTitle("Pozwolenie na broń")
-      .setURL(`https://www.roblox.com/users/${profile.id}/profile`)
-      .addFields(
-        { name: "Członek Discord", value: `<@${message.author.id}>`, inline: true },
-        {
-          name: "Konto Roblox",
-          value: `[@${profile.username}](https://www.roblox.com/users/${profile.id}/profile)`,
-          inline: true,
-        },
-        {
-          name: "ID Roblox",
-          value: `[${profile.id}](https://www.roblox.com/users/${profile.id}/profile)`,
-          inline: true,
-        },
-        { name: "Rodzaj broni", value: request.weaponType },
-      )
-      .setThumbnail(profile.imageUrl)
-      .setTimestamp();
-    await permitChannel.send({
-      content: `<@${message.author.id}> Twoje pozwolenie na broń jest gotowe.`,
-      embeds: [permitEmbed],
-      allowedMentions: { parse: [], users: [message.author.id] },
-    });
-    await updateWeaponPermitIdentityRequests(async (requests) => {
-      delete requests[message.author.id];
-    });
-    await message.reply("Dziękuję! Twoje pozwolenie na broń zostało opublikowane.");
+    const profile = await getRobloxProfileFromIdentity(answer);
+    request.stage = "confirm";
+    request.robloxProfile = profile;
+    await updateWeaponPermitIdentityRequests(async (requests) => { requests[message.author.id] = request; });
+    await message.reply(`Czy to poprawne konto Roblox: **@${profile.username}** (ID: ${profile.id})? Odpowiedz „tak” albo „nie”.`);
     return true;
   } finally {
     weaponPermitIdentityRequestLocks.delete(message.author.id);
@@ -270,7 +295,7 @@ async function getRobloxProfile(userId) {
     throw new Error("Roblox API nie zwróciło awatara dla tego konta.");
   }
 
-  return { id: String(profile.id), username: profile.name, imageUrl };
+  return { id: String(profile.id), username: profile.name, displayName: profile.displayName || profile.name, imageUrl };
 }
 
 async function getRobloxProfileByUsername(username) {
@@ -417,14 +442,44 @@ function normalizePolishText(value) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pl-PL");
 }
 
-function createBotMentionReply(message) {
+function getBotMentionContext(message) {
   const content = normalizePolishText(message.content.replace(/<@!?\d+>/g, " ").trim());
+  const hasImage = message.attachments.some((attachment) =>
+    attachment.contentType?.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/i.test(attachment.name ?? ""),
+  ) || message.embeds.some((embed) => embed.image || embed.thumbnail);
+  const asksForRating = /\b(ocen\w*|ocena|ocenke|rating|ile\s*\/\s*10|na\s*ile)\b/.test(content);
+  const asksOpinion = /\b(co\s+sadzisz|co\s+myslisz|jak\s+oceniasz|twoja\s+opinia|co\s+o\s+tym)\b/.test(content);
+  const hasMentionedPerson = [...message.mentions.users.values()].some((user) => user.id !== client.user?.id);
+  if (hasImage && asksForRating) return { kind: "image-rating", createdAt: Date.now() };
+  if (hasMentionedPerson && asksOpinion) return { kind: "person-opinion", createdAt: Date.now() };
+  return null;
+}
+
+function createBotMentionReply(message, previousContext = null) {
+  const content = normalizePolishText(message.content.replace(/<@!?\d+>/g, " ").trim());
+  const mentionedPeople = [...message.mentions.users.values()].filter((user) => user.id !== client.user?.id);
   const hasImage = message.attachments.some((attachment) =>
     attachment.contentType?.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/i.test(attachment.name ?? ""),
   ) || message.embeds.some((embed) => embed.image || embed.thumbnail);
 
   if (message.channelId === codeInformationChannelId && isPolishCodeQuestion(content)) {
     return "Kod to `1fid26k3` — miłej zabawy w grze! 🎮";
+  }
+
+  const asksOpinion = /\b(co\s+sadzisz|co\s+myslisz|jak\s+oceniasz|twoja\s+opinia|co\s+o\s+tym)\b/.test(content);
+  if (mentionedPeople.length > 0 && asksOpinion) {
+    return pickRandom([
+      "Nie znam go na tyle, żeby oceniać go po samym nicku 😄 Masz na myśli konkretną sytuację albo klip?",
+      "O nim? Podeślij, co zrobił albo jakiś klip, a odniosę się do tej sytuacji 👀",
+      "Ciężko mi wyrobić opinię o kimś bez kontekstu 😅 Chodzi Ci o jego zachowanie czy grę?",
+    ]);
+  }
+
+  if (previousContext?.kind === "image-rating" && /\b(dlaczego|czemu|za\s+co|jak\s+to)\b/.test(content)) {
+    return "To była luźna ocena samego obrazka 😄 Jeśli chcesz, mogę rozwinąć opinię o konkretnym elemencie, który na nim widać.";
+  }
+  if (previousContext?.kind === "person-opinion" && /\b(dlaczego|czemu|jak\s+to|konkretnie)\b/.test(content)) {
+    return "Chodzi mi o to, że nie mam dość kontekstu, żeby oceniać tę osobę. Opisz konkretną sytuację, a odniosę się do niej 👀";
   }
 
   const asksForRating = /\b(ocen\w*|ocena|ocenke|rating|ile\s*\/\s*10|na\s*ile)\b/.test(content);
@@ -449,7 +504,7 @@ function createBotMentionReply(message) {
     ]);
   }
 
-  if (/\b(co\s+sadzisz|co\s+myslisz|jak\s+oceniasz|twoja\s+opinia|co\s+o\s+tym)\b/.test(content)) {
+  if (asksOpinion) {
     if (/\b(serwer|discord|spolecznosc|ekipa)\b/.test(content)) {
       return pickRandom([
         "Moim zdaniem ma fajny potencjał — klimat robią przede wszystkim ludzie 👀",
@@ -465,11 +520,9 @@ function createBotMentionReply(message) {
       ]);
     }
     return pickRandom([
-      "Brzmi ciekawie 👀 Ja jestem raczej na tak!",
-      "Mam mieszane odczucia 😅 Co najbardziej ci się w tym podoba?",
-      "Całkiem spoko, ma swój klimat ✨",
-      "Hmm, chyba nie do końca mój styl, ale rozumiem zamysł 🤔",
-      "Daję temu szansę 👍",
+      "Brzmi ciekawie 👀 Co konkretnie masz na myśli?",
+      "Mogę powiedzieć więcej, tylko daj mi trochę kontekstu 😄",
+      "Na razie ciężko ocenić bez szczegółów 🤔 O który element pytasz?",
     ]);
   }
 
@@ -1275,8 +1328,28 @@ function isLeaveReviewMessage(interaction, userId, message = interaction.message
 async function sendWeaponPermitQuestion(application) {
   const question = weaponPermitQuestions[application.answers.length];
   await application.user.send({
-    content: `${question.prompt}\n\nOdpowiedz na tę wiadomość. Wpisz „anuluj”, aby przerwać wniosek. Pozostały czas: 15 minut.`,
+    content: `${application.answers.length === 0 ? "Odpowiedz na pytania, aby personel mógł rozpatrzyć wniosek i — po akceptacji — poprawnie wypełnić Twoją fikcyjną legitymację broni RP. Podawaj wyłącznie dane swojej postaci RP.\n\n" : ""}${question.prompt}\n\nOdpowiedz na tę wiadomość. Wpisz „anuluj”, aby przerwać wniosek. Pozostały czas: 15 minut.`,
     allowedMentions: { parse: [] },
+  });
+}
+
+async function publishWeaponPermitCard({ guild, applicantId, profile, weaponType, fullName, birthDetails, address, issuerName }) {
+  const permitChannel = await guild.channels.fetch(weaponPermitPublicationChannelId);
+  if (!permitChannel || permitChannel.type !== ChannelType.GuildText) {
+    throw new Error(`Kanał publikacji pozwoleń ${weaponPermitPublicationChannelId} nie istnieje albo nie jest tekstowy.`);
+  }
+  const issuedAt = new Intl.DateTimeFormat("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Warsaw" }).format(new Date());
+  const image = await createWeaponPermitCardImage({ profile, fullName, birthDetails, address, weaponType, issuerName, issuedAt });
+  const attachment = new AttachmentBuilder(image, { name: "legitymacja-broni-rp.png" });
+  const card = new EmbedBuilder()
+    .setColor(0x2980b9)
+    .setTitle(`Fikcyjna legitymacja broni RP — ${profile.username}`)
+    .setURL(`https://www.roblox.com/users/${profile.id}/profile`)
+    .setImage("attachment://legitymacja-broni-rp.png")
+    .setFooter({ text: "FIKCYJNY DOKUMENT ROLEPLAY — NIE JEST PRAWDZIWYM POZWOLENIEM" });
+  await permitChannel.send({
+    content: `<@${applicantId}> Twoja fikcyjna legitymacja broni RP jest gotowa.`,
+    embeds: [card], files: [attachment], allowedMentions: { parse: [], users: [applicantId] },
   });
 }
 
@@ -1329,6 +1402,41 @@ async function handleWeaponPermitAnswer(message) {
   if (answer.toLocaleLowerCase("pl") === "anuluj") {
     clearWeaponPermitApplication(message.author.id);
     await message.reply("Wniosek o pozwolenie na broń został anulowany.");
+    return;
+  }
+
+  if (application.stage === "confirm-roblox") {
+    const normalized = answer.toLocaleLowerCase("pl");
+    if (["nie", "n", "no"].includes(normalized)) {
+      application.stage = "roblox-username";
+      application.robloxProfile = null;
+      await message.reply("Wpisz ponownie swoją nazwę Roblox (np. @NazwaGracza) albo ID Roblox.");
+      application.processing = false;
+      return;
+    }
+    if (!["tak", "t", "yes", "y"].includes(normalized)) {
+      await message.reply("Odpowiedz „tak” jeśli to poprawne albo „nie”, aby wpisać konto ponownie.");
+      application.processing = false;
+      return;
+    }
+    application.answers.push(`@${application.robloxProfile.username}`);
+    application.stage = "questions";
+    await sendWeaponPermitQuestion(application);
+    application.processing = false;
+    return;
+  }
+
+  if (application.answers.length === 0) {
+    try {
+      application.robloxProfile = await getRobloxProfileFromIdentity(answer);
+    } catch (error) {
+      await message.reply(`${error.message} Spróbuj ponownie wpisać nazwę Roblox lub ID.`);
+      application.processing = false;
+      return;
+    }
+    application.stage = "confirm-roblox";
+    await message.reply(`Czy to poprawne konto Roblox: **@${application.robloxProfile.username}** (ID: ${application.robloxProfile.id})? Odpowiedz „tak” albo „nie”.`);
+    application.processing = false;
     return;
   }
 
@@ -1543,13 +1651,13 @@ async function handleBotKickChannelMessage(message) {
 
 async function handleRestrictedMassMention(message) {
   if (!message.guild || message.author.bot || message.webhookId) return false;
-  const member = message.member ?? await message.guild.members.fetch(message.author.id);
-  if (!member.roles.cache.has(noMassMentionRoleId)) return false;
-
   const violatedRule =
     message.mentions.roles.has(noMassMentionRoleId) ||
     message.mentions.everyone;
   if (!violatedRule) return false;
+
+  const member = message.member ?? await message.guild.members.fetch(message.author.id);
+  if (!member.roles.cache.has(noMassMentionRoleId)) return false;
 
   const reason = `Niedozwolone masowe oznaczenie przez członka roli ${noMassMentionRoleId}.`;
   const [deleteResult, timeoutResult] = await Promise.allSettled([
@@ -3727,35 +3835,48 @@ function formatElapsedTime(durationMs) {
   return `${seconds} s`;
 }
 
-function buildRecruitmentSummaryEmbed(session, applicant, elapsedMs) {
+function buildRecruitmentSummaryEmbeds(session, applicant, elapsedMs) {
   const { score, signals } = getRecruitmentStyleIndicator(session.answers);
-  const scoreDescription = signals.length
-    ? signals.map((signal) => `• ${signal}`).join("\n")
-    : "Nie znaleziono sygnałów na zastosowanej liście heurystycznej.";
-  const answerFields = recruitmentQuestions.map((item, index) => ({
-    name: `${index + 1}. ${item.section} — ${item.question}`,
-    value: session.answers[index],
+  const answerFields = (indices, labels) => indices.map((index, labelIndex) => ({
+    name: labels[labelIndex],
+    value: session.answers[index] || "—",
+    inline: false,
   }));
-  return new EmbedBuilder()
+  const introduction = [
+    `**Kandydat:** <@${applicant.id}> (${applicant.tag})`,
+    `**Czas wypełnienia:** ${formatElapsedTime(elapsedMs)}`,
+  ].join("\n");
+  const candidateInfo = new EmbedBuilder()
     .setColor(0xe0a12f)
-    .setTitle("Podanie rekrutacyjne")
-    .setDescription([
-      `**Kandydat:** <@${applicant.id}> (${applicant.tag})`,
-      `**Czas wypełnienia:** ${formatElapsedTime(elapsedMs)}`,
-    ].join("\n"))
-    .addFields(
-      ...answerFields,
-      {
-        name: `Wskaźnik stylu przypominającego AI: ${score}/100`,
-        value: scoreDescription,
-      },
-      {
-        name: "Jak interpretować wskaźnik",
-        value: "To wyłącznie heurystyczny wynik sygnałów tekstowych — nie prawdopodobieństwo ani dowód użycia AI. Może błędnie ocenić zarówno tekst człowieka, jak i AI; nie podejmuj decyzji rekrutacyjnej wyłącznie na jego podstawie.",
-      },
-    )
+    .setTitle("Podanie rekrutacyjne · informacje")
+    .setDescription(introduction)
+    .addFields(...answerFields(
+      [0, 1, 2, 3, 4],
+      ["Imię / nick", "Wiek", "Dostępność", "Powód zgłoszenia", "Doświadczenie"],
+    ))
     .setFooter({ text: `recruitment-application:${session.guildId}:${applicant.id}:pending` })
     .setTimestamp();
+  const roleplayKnowledge = new EmbedBuilder()
+    .setColor(0xe0a12f)
+    .setTitle("Podanie rekrutacyjne · wiedza RP")
+    .addFields(...answerFields(
+      [5, 6, 7, 8, 9, 10, 11, 12, 13],
+      ["FRP", "VDM", "RDM", "MG", "PG", "CL", "IC / OOC", "RK", "FearRP"],
+    ));
+  const scenarios = new EmbedBuilder()
+    .setColor(0xe0a12f)
+    .setTitle("Podanie rekrutacyjne · scenariusze")
+    .addFields(
+      ...answerFields(
+        [14, 15, 16],
+        ["Łamanie zasad", "Spór o karę", "Znajomy łamie zasady"],
+      ),
+      {
+        name: `Wskaźnik tekstu AI: ${score}/100`,
+        value: `${signals.length ? signals.join(" · ") : "Brak wykrytych sygnałów."} To tylko niedokładna heurystyka — nie używaj jej jako podstawy decyzji.`,
+      },
+    );
+  return [candidateInfo, roleplayKnowledge, scenarios];
 }
 
 async function handleTicketSelect(interaction) {
@@ -3858,7 +3979,7 @@ async function handleRecruitmentAnswer(message) {
   const remainingCharacters = maxRecruitmentAnswerCharacters - session.answerCharacters;
   const answerLimit = Math.min(1000, Math.floor(remainingCharacters / remainingQuestions));
   if (answer.length > answerLimit) {
-    await message.reply(`Skróć tę odpowiedź do ${answerLimit} znaków lub mniej, aby wszystkie odpowiedzi zmieściły się w jednym embedzie.`);
+    await message.reply(`Skróć tę odpowiedź do ${answerLimit} znaków lub mniej, aby całe podanie zmieściło się w trzech embedach.`);
     return true;
   }
   session.answers.push(answer);
@@ -3887,7 +4008,7 @@ async function handleRecruitmentAnswer(message) {
   };
   await destination.send({
     ...reviewHeader,
-    embeds: [buildRecruitmentSummaryEmbed(session, message.author, Date.now() - session.startedAt)],
+    embeds: buildRecruitmentSummaryEmbeds(session, message.author, Date.now() - session.startedAt),
     components: [decisionRow],
   });
   await message.author.send("Dziękujemy! Twoje podanie zostało wysłane do zespołu rekrutacji.");
@@ -3902,18 +4023,18 @@ async function handleRecruitmentDecision(interaction, approve) {
     await interaction.reply({ content: "To podanie zostało już rozpatrzone albo jego konfiguracja jest nieaktualna.", ephemeral: true });
     return;
   }
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const member = await interaction.guild.members.fetch(interaction.user.id);
   if (!member.permissions.has(PermissionFlagsBits.ManageGuild) && !member.roles.cache.has(config.reviewerRoleId)) {
-    await interaction.reply({ content: "Tylko zespół rekrutacji może rozpatrywać podania.", ephemeral: true });
+    await interaction.editReply("Tylko zespół rekrutacji może rozpatrywać podania.");
     return;
   }
   if (recruitmentDecisionLocks.has(interaction.message.id)) {
-    await interaction.reply({ content: "To podanie jest już rozpatrywane.", ephemeral: true });
+    await interaction.editReply("To podanie jest już rozpatrywane.");
     return;
   }
   recruitmentDecisionLocks.add(interaction.message.id);
   try {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const applicantId = match[2];
     const applicant = await interaction.guild.members.fetch(applicantId).catch(() => null);
     if (approve) {
@@ -4231,15 +4352,20 @@ async function handleButton(interaction) {
       await interaction.reply({ content: "Nie rozpoznaję tego kanału jako ticketu.", ephemeral: true });
       return;
     }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const supportRoleId = webhookConfigs[interaction.guildId]?.ticketsConfig?.supportRoleId;
-    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+    if (!member) {
+      await interaction.editReply("Nie udało mi się sprawdzić Twoich ról. Spróbuj ponownie za chwilę.");
+      return;
+    }
     const isOwner = match[1] === interaction.user.id;
     const isStaff = Boolean(supportRoleId && member.roles.cache.has(supportRoleId));
     if (!isOwner && !isStaff && !member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-      await interaction.reply({ content: "Tylko autor ticketu lub personel może go zamknąć.", ephemeral: true });
+      await interaction.editReply("Tylko autor ticketu lub personel może go zamknąć.");
       return;
     }
-    await interaction.reply({ content: "Ticket zostanie zamknięty i kanał usunięty za 5 sekund.", ephemeral: true });
+    await interaction.editReply("Ticket zostanie zamknięty i kanał usunięty za 5 sekund.");
     setTimeout(() => interaction.channel.delete("Ticket zamknięty przez użytkownika lub personel.").catch((error) => {
       console.error("Nie udało się usunąć zamkniętego ticketu:", error);
     }), 5000);
@@ -4263,7 +4389,8 @@ async function handleButton(interaction) {
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const member = interaction.guild.members.cache.get(interaction.user.id) ??
+      await interaction.guild.members.fetch(interaction.user.id);
     const messageId = interaction.message.id;
     const participation = await updateActivityCheckParticipants(async () => {
       const participantsByMessage = await loadActivityCheckParticipants();
@@ -4347,7 +4474,8 @@ async function handleButton(interaction) {
       throw new Error("Skonfigurowano rolę @everyone dla checku aktywności. Uruchom ponownie konfigurację i wybierz konkretną rolę.");
     }
 
-    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const member = interaction.guild.members.cache.get(interaction.user.id) ??
+      await interaction.guild.members.fetch(interaction.user.id);
     if (!config.activityCheckAllowedRoleIds.some((roleId) => member.roles.cache.has(roleId))) {
       await interaction.reply({
         content: "Nie masz roli uprawnionej do użycia tego przycisku.",
@@ -4588,6 +4716,7 @@ async function handleButton(interaction) {
       }
       let decisionLabel;
       let approvedApplicant;
+      let approvedProfile;
       if (decision === "approve") {
         const botMember = await interaction.guild.members.fetchMe();
         if (
@@ -4605,12 +4734,7 @@ async function handleButton(interaction) {
         if (!weaponType) {
           throw new Error("We wniosku nie ma podanego rodzaju broni.");
         }
-        await updateWeaponPermitIdentityRequests(async (requests) => {
-          requests[applicantId] = {
-            guildId: interaction.guildId,
-            weaponType,
-          };
-        });
+        approvedProfile = await getRobloxProfileFromIdentity(getEmbedField(embed, "Nick Roblox"));
         decisionLabel = "Zaakceptowano";
       } else if (decision === "reject") {
         decisionLabel = "Odrzucono";
@@ -4633,6 +4757,18 @@ async function handleButton(interaction) {
         components: [makeWeaponPermitReviewRow(applicantId, true)],
         allowedMentions: { parse: [] },
       });
+      if (decision === "approve") {
+        await publishWeaponPermitCard({
+          guild: interaction.guild,
+          applicantId,
+          profile: approvedProfile,
+          weaponType: getEmbedField(embed, "Rodzaj broni"),
+          fullName: getEmbedField(embed, "Imię i nazwisko"),
+          birthDetails: getEmbedField(embed, "Data i miejsce urodzenia"),
+          address: getEmbedField(embed, "Adres stałego pobytu"),
+          issuerName: interaction.member?.displayName || interaction.user.globalName || interaction.user.username,
+        });
+      }
       const applicantUser = await client.users.fetch(applicantId).catch((error) => {
         console.error(`Nie udało się pobrać użytkownika ${applicantId} do powiadomienia o decyzji:`, error);
         return null;
@@ -4640,7 +4776,7 @@ async function handleButton(interaction) {
       if (applicantUser) {
         await applicantUser.send(
           decision === "approve"
-            ? `Twój wniosek o pozwolenie na broń na serwerze ${interaction.guild.name} został zaakceptowany. Nadano Ci rolę ${permitRole.name}.\n\nWyślij tutaj swoją nazwę Roblox (np. @NazwaGracza) albo numeryczne ID Roblox, a opublikuję Twoje pozwolenie na broń.`
+            ? `Twój wniosek o pozwolenie na broń na serwerze ${interaction.guild.name} został zaakceptowany. Nadano Ci rolę ${permitRole.name}; fikcyjna legitymacja RP została przygotowana na podstawie konta Roblox potwierdzonego w formularzu.`
             : `Twój wniosek o pozwolenie na broń na serwerze ${interaction.guild.name} został odrzucony.`,
         ).catch((error) => {
           console.error(`Nie udało się powiadomić użytkownika ${applicantId} o decyzji w sprawie wniosku:`, error);
@@ -4907,14 +5043,13 @@ async function handleButton(interaction) {
   ) {
     throw new Error("Panel weryfikacji ma nieprawidłowo skonfigurowane role.");
   }
-  const [rolesToGive, roleToRemove] = await Promise.all([
-    Promise.all(giveRoleIds.map((id) => interaction.guild.roles.fetch(id))),
-    interaction.guild.roles.fetch(removeRoleId),
-  ]);
+  const rolesToGive = giveRoleIds.map((id) => interaction.guild.roles.cache.get(id) ?? null);
+  const roleToRemove = interaction.guild.roles.cache.get(removeRoleId) ?? null;
   if (rolesToGive.some((role) => !role) || !roleToRemove) {
     throw new Error("Jedna z ról panelu weryfikacji już nie istnieje.");
   }
-  const member = await interaction.guild.members.fetch(interaction.user.id);
+  const member = interaction.guild.members.cache.get(interaction.user.id) ??
+    await interaction.guild.members.fetch(interaction.user.id);
   if (rolesToGive.every((role) => member.roles.cache.has(role.id))) {
     await interaction.reply({ content: "Masz już przyznaną rolę zweryfikowanego gracza.", ephemeral: true });
     return;
@@ -5873,8 +6008,7 @@ client.once("ready", async () => {
     console.info(`Zarejestrowano ${commands.length} komend slash na serwerze ${commandGuildId}.`);
   } catch (error) {
     console.error("Nie udało się automatycznie zarejestrować komend Discord:", error);
-    process.exitCode = 1;
-    await client.destroy();
+    console.error("Bot pozostaje online; komendy slash mogą wymagać ponownej synchronizacji po naprawieniu błędu.");
   }
 });
 
@@ -5929,8 +6063,24 @@ client.on("messageCreate", async (message) => {
     return;
   }
   if (botWasMentioned) {
+    const contextKey = `${message.channelId}:${message.author.id}`;
+    const storedContext = botMentionConversationContexts.get(contextKey);
+    const previousContext = storedContext && Date.now() - storedContext.createdAt < 10 * 60 * 1000
+      ? storedContext
+      : null;
+    const nextContext = getBotMentionContext(message);
+    if (nextContext) {
+      botMentionConversationContexts.set(contextKey, nextContext);
+    } else {
+      botMentionConversationContexts.delete(contextKey);
+    }
+    if (botMentionConversationContexts.size > 1000) {
+      for (const [key, context] of botMentionConversationContexts) {
+        if (Date.now() - context.createdAt >= 10 * 60 * 1000) botMentionConversationContexts.delete(key);
+      }
+    }
     await message.reply({
-      content: createBotMentionReply(message),
+      content: createBotMentionReply(message, previousContext),
       allowedMentions: { parse: [] },
     }).catch((error) => {
       console.error("Nie udało się odpowiedzieć na oznaczenie bota:", error);

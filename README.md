@@ -61,7 +61,7 @@ Bot jest procesem Discord Gateway, więc nie potrzebuje strony WWW ani otwartego
    cd /home/container && npm start
    ```
 
-   Nie używaj tu samego `npm install`: po zainstalowaniu pakietów proces kończy się, a bot pozostaje offline. Skrypt `npm start` uruchamia `node src/index.js` i pozostawia proces bota działający.
+   Nie używaj tu samego `npm install`: po zainstalowaniu pakietów proces kończy się, a bot pozostaje offline. `npm start` uruchamia nadzorcę, który ponawia start bota po nieoczekiwanym zamknięciu i przekazuje sygnały zatrzymania hostingu do procesu bota.
 6. Komendy slash są rejestrowane automatycznie przy starcie bota. Ustaw `GUILD_ID`, aby rejestrować je na jednym serwerze i szybciej zobaczyć zmiany.
 
 Dodaj `DISCORD_TOKEN` i `CLIENT_ID` w ustawieniach zmiennych środowiskowych Wispbyte. Jeśli bot nie może się zalogować, sprawdź logi konsoli oraz czy te zmienne są ustawione bez dodatkowych cudzysłowów lub spacji. Nie publikuj tokena ani nie umieszczaj go w plikach przesyłanych publicznie.

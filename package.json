@@ -5,8 +5,9 @@
   "description": "Polish Discord moderation and math verification bot for Polonia RP",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "check": "node --check src/index.js && node --check src/code-question.js && node --check src/fictional-rp-card.js && node --check src/commands.js && node --check api/bot-command.js && node --check api/get-guilds.js && node --check api/get-token.js && node --check api/panel.js && node --check api/trucksbook-km.js && node --check api/welcome-preview.js",
+    "start": "node src/runner.js",
+    "start:direct": "node src/index.js",
+    "check": "node --check src/runner.js && node --check src/index.js && node --check src/code-question.js && node --check src/fictional-rp-card.js && node --check src/weapon-permit-card.js && node --check src/commands.js && node --check api/bot-command.js && node --check api/get-guilds.js && node --check api/get-token.js && node --check api/panel.js && node --check api/trucksbook-km.js && node --check api/welcome-preview.js",
     "test": "node --test"
   },
   "engines": {
