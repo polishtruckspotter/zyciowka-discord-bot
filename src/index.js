@@ -594,7 +594,7 @@ const botChatInstructions = [
 function getConfiguredBotAiProviders() {
   const providers = {
     gemini: process.env.GEMINI_API_KEY
-      ? { name: "Gemini", id: "gemini", key: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL || "gemini-2.5-flash-lite" }
+      ? { name: "Gemini", id: "gemini", key: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL || "gemini-3.5-flash-lite" }
       : null,
     together: process.env.TOGETHER_API_KEY
       ? { name: "Together AI", id: "together", key: process.env.TOGETHER_API_KEY, model: process.env.TOGETHER_MODEL || "Qwen/Qwen3.5-9B" }
@@ -745,6 +745,18 @@ async function generateBotMentionReply(message, previousBotReply = "", conversat
       return await generateWithBotAiProvider(provider, conversationHistory, onPartialReply);
     } catch (error) {
       lastError = error;
+      if (provider.id === "gemini" && error.status === 404) {
+        const triedModels = provider.triedModels ?? [provider.model];
+        const fallbackModel = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"].find((model) => !triedModels.includes(model));
+        if (fallbackModel && attempt < 3) {
+          providerQueue.unshift({
+            provider: { ...provider, model: fallbackModel, triedModels: [...triedModels, fallbackModel] },
+            delayMs: 0,
+          });
+          console.warn(`${provider.name} nie znalazło modelu ${provider.model}; ponawiam z ${fallbackModel}.`);
+          continue;
+        }
+      }
       const retryableStatus = !error.status || error.status === 408 || error.status >= 500;
       const shortRateLimit = error.status === 429 && error.retryAfterMs > 0 && error.retryAfterMs <= 1500;
       const canRetry = attempt < 3 && (retryableStatus || shortRateLimit);

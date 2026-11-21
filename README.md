@@ -22,7 +22,7 @@ Polskojęzyczny bot do weryfikacji członków i podstawowej moderacji serwera Di
    - `GUILD_ID` — ID serwera, domyślnie `1561435544930623619`; komendy slash są rejestrowane na tym serwerze. Bot musi już należeć do niego; samo ID nie dodaje bota do serwera.
    - `MOD_LOG_CHANNEL_ID` — ID kanału logów moderacji; ustaw prywatny kanał, aby personel otrzymywał alerty antyraid.
    - `AI_PROVIDER` — `auto` (domyślnie) próbuje po kolei skonfigurowanych dostawców: Gemini, Together AI, OpenAI. Możesz wpisać `gemini`, `together` albo `openai`, aby wybrać dostawcę jako pierwszego.
-   - `GEMINI_API_KEY` — klucz z Google AI Studio; domyślny model to `gemini-2.5-flash-lite` (`GEMINI_MODEL`). Gemini API ma ograniczony bezpłatny limit; jego dostępność i warunki zależą od konta.
+   - `GEMINI_API_KEY` — klucz z Google AI Studio; domyślny model to `gemini-3.5-flash-lite` (`GEMINI_MODEL`). Przy błędzie 404 bot próbuje też `gemini-3.1-flash-lite`. Gemini API ma ograniczony bezpłatny limit; jego dostępność i warunki zależą od konta.
    - `TOGETHER_API_KEY` — klucz Together AI; domyślny model to `Qwen/Qwen3.5-9B` (`TOGETHER_MODEL`). Ceny i limity zależą od modelu i konta.
    - `OPENAI_API_KEY` — opcjonalny klucz OpenAI; domyślny model to `gpt-4o-mini` (`OPENAI_MODEL`).
 
@@ -55,7 +55,7 @@ Bot jest procesem Discord Gateway, więc nie potrzebuje strony WWW ani otwartego
    - `GUILD_ID` — opcjonalny ID serwera Discord; zalecany, żeby komendy pojawiły się szybciej podczas konfiguracji.
    - `MOD_LOG_CHANNEL_ID` — ID prywatnego kanału moderacji, wymagane do dostarczania alertów antyraid personelowi.
    - `AI_PROVIDER` — `auto` próbuje dostawców w kolejności Gemini, Together AI, OpenAI; można ustawić `gemini`, `together` albo `openai`.
-   - `GEMINI_API_KEY` — klucz z Google AI Studio; domyślny model `gemini-2.5-flash-lite` (`GEMINI_MODEL`). Dostępny jest ograniczony bezpłatny limit zależny od konta.
+   - `GEMINI_API_KEY` — klucz z Google AI Studio; domyślny model `gemini-3.5-flash-lite` (`GEMINI_MODEL`). Przy błędzie 404 bot próbuje `gemini-3.1-flash-lite`.
    - `TOGETHER_API_KEY` — klucz Together AI; domyślny model `Qwen/Qwen3.5-9B` (`TOGETHER_MODEL`).
    - `OPENAI_API_KEY` — opcjonalny klucz OpenAI; domyślny model `gpt-4o-mini` (`OPENAI_MODEL`).
 
