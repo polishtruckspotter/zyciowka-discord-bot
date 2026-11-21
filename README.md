@@ -21,10 +21,12 @@ Polskojęzyczny bot do weryfikacji członków i podstawowej moderacji serwera Di
    - `CLIENT_ID` — Application ID aplikacji Discord.
    - `GUILD_ID` — ID serwera, domyślnie `1561435544930623619`; komendy slash są rejestrowane na tym serwerze. Bot musi już należeć do niego; samo ID nie dodaje bota do serwera.
    - `MOD_LOG_CHANNEL_ID` — ID kanału logów moderacji; ustaw prywatny kanał, aby personel otrzymywał alerty antyraid.
-   - `OPENAI_API_KEY` — klucz API OpenAI, wymagany do naturalnych, kontekstowych odpowiedzi po oznaczeniu bota. Bez klucza bot używa prostych odpowiedzi lokalnych. Użycie API może wiązać się z opłatami.
-   - `OPENAI_MODEL` — opcjonalna nazwa modelu; domyślnie `gpt-4o-mini`.
+   - `AI_PROVIDER` — `auto` (domyślnie) próbuje po kolei skonfigurowanych dostawców: Gemini, Together AI, OpenAI. Możesz wpisać `gemini`, `together` albo `openai`, aby wybrać dostawcę jako pierwszego.
+   - `GEMINI_API_KEY` — klucz z Google AI Studio; domyślny model to `gemini-2.5-flash-lite` (`GEMINI_MODEL`). Gemini API ma ograniczony bezpłatny limit; jego dostępność i warunki zależą od konta.
+   - `TOGETHER_API_KEY` — klucz Together AI; domyślny model to `Qwen/Qwen3.5-9B` (`TOGETHER_MODEL`). Ceny i limity zależą od modelu i konta.
+   - `OPENAI_API_KEY` — opcjonalny klucz OpenAI; domyślny model to `gpt-4o-mini` (`OPENAI_MODEL`).
 
-   Oznaczenie bota wysyła treść wiadomości oraz do 6 ostatnich wiadomości z kanału do API OpenAI, by bot mógł odpowiedzieć w kontekście. Nie wpisuj klucza API w publicznym pliku ani na czacie.
+   Bot używa pierwszego skonfigurowanego dostawcy, a po błędzie przechodzi do kolejnego. Jeśli nie ustawisz żadnego klucza, korzysta z prostych odpowiedzi lokalnych. Treść wiadomości i do 10 ostatnich tur rozmowy z botem są przekazywane wybranemu dostawcy AI. Free tier Gemini może wykorzystywać dane do ulepszania usług Google. Nie publikuj kluczy API.
 
 3. W Discord Developer Portal → Bot → Privileged Gateway Intents włącz **Message Content Intent**. Bot potrzebuje go, aby odczytywać treść logów wysyłanych przez webhook gry i obsługiwać komendy ekonomii z prefiksem `!`. Włącz również **Server Members Intent** (`Guild Members`), aby wykrywać dołączających członków i alertować personel o podejrzanych dołączeniach. Bot korzysta też z intents `Guilds` i `Guild Messages`.
 
@@ -52,10 +54,12 @@ Bot jest procesem Discord Gateway, więc nie potrzebuje strony WWW ani otwartego
    - `CLIENT_ID` — Application ID bota.
    - `GUILD_ID` — opcjonalny ID serwera Discord; zalecany, żeby komendy pojawiły się szybciej podczas konfiguracji.
    - `MOD_LOG_CHANNEL_ID` — ID prywatnego kanału moderacji, wymagane do dostarczania alertów antyraid personelowi.
-   - `OPENAI_API_KEY` — klucz API OpenAI, aby bot odpowiadał naturalnie na wiadomości po oznaczeniu. Bez niego używane są proste odpowiedzi lokalne. Użycie API może wiązać się z opłatami.
-   - `OPENAI_MODEL` — opcjonalny model; domyślnie `gpt-4o-mini`.
+   - `AI_PROVIDER` — `auto` próbuje dostawców w kolejności Gemini, Together AI, OpenAI; można ustawić `gemini`, `together` albo `openai`.
+   - `GEMINI_API_KEY` — klucz z Google AI Studio; domyślny model `gemini-2.5-flash-lite` (`GEMINI_MODEL`). Dostępny jest ograniczony bezpłatny limit zależny od konta.
+   - `TOGETHER_API_KEY` — klucz Together AI; domyślny model `Qwen/Qwen3.5-9B` (`TOGETHER_MODEL`).
+   - `OPENAI_API_KEY` — opcjonalny klucz OpenAI; domyślny model `gpt-4o-mini` (`OPENAI_MODEL`).
 
-   Przy oznaczeniu bota treść wiadomości i do 6 ostatnich wiadomości z kanału są przekazywane do API OpenAI jako kontekst odpowiedzi.
+   Bot używa dostawców z ustawionymi kluczami, przechodząc do następnego po błędzie. Wiadomość i do 10 ostatnich tur rozmowy są przekazywane do aktywnego dostawcy. Google może wykorzystywać dane z bezpłatnego poziomu Gemini do ulepszania usług.
 4. Zainstaluj zależności jednorazowo z konsoli Wispbyte (nie ustawiaj tego jako Startup Command):
 
    ```sh
