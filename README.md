@@ -25,6 +25,7 @@ Polskojęzyczny bot do weryfikacji członków i podstawowej moderacji serwera Di
    - `GEMINI_API_KEY` — klucz z Google AI Studio; domyślny model to `gemini-3.5-flash-lite` (`GEMINI_MODEL`). Przy błędzie 404 bot próbuje też `gemini-3.1-flash-lite`. Gemini API ma ograniczony bezpłatny limit; jego dostępność i warunki zależą od konta.
    - `TOGETHER_API_KEY` — klucz Together AI; domyślny model to `Qwen/Qwen3.5-9B` (`TOGETHER_MODEL`). Ceny i limity zależą od modelu i konta.
    - `OPENAI_API_KEY` — opcjonalny klucz OpenAI; domyślny model to `gpt-4o-mini` (`OPENAI_MODEL`).
+   - `ANNOUNCEMENT_CHANNEL_ID` — opcjonalny kanał tekstowy okazjonalnych, losowo publikowanych powitań Poznań RP dopasowanych do poranka, popołudnia lub wieczoru. Wiadomości nie pingują `@everyone`.
 
    Bot używa pierwszego skonfigurowanego dostawcy, a po błędzie przechodzi do kolejnego. Jeśli nie ustawisz żadnego klucza, korzysta z prostych odpowiedzi lokalnych. Treść wiadomości i do 10 ostatnich tur rozmowy z botem są przekazywane wybranemu dostawcy AI. Free tier Gemini może wykorzystywać dane do ulepszania usług Google. Nie publikuj kluczy API.
 
