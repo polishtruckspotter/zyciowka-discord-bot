@@ -3796,12 +3796,15 @@ async function handleCommand(interaction) {
       return;
     }
 
-    await updateWebhookConfig(interaction.guildId, { idCardChannelId: destination.id });
+    await updateWebhookConfig(interaction.guildId, {
+      idCardChannelId: destination.id,
+      idCardPanelChannelId: interaction.channelId,
+    });
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
-      .setTitle("Fikcyjna karta postaci RP")
+      .setTitle("Fikcyjna karta postaci RP — Poznań RP")
       .setDescription("Kliknij przycisk poniżej, aby utworzyć **FIKCYJNĄ** kartę postaci dla Poznań RP.")
-      .setFooter({ text: "FIKCYJNA KARTA RP — NIE JEST DOKUMENTEM" });
+      .setFooter({ text: "Poznań RP • FIKCYJNA KARTA RP — NIE JEST DOKUMENTEM" });
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`create-id-card:${destination.id}`)
@@ -3809,9 +3812,20 @@ async function handleCommand(interaction) {
         .setStyle(ButtonStyle.Primary),
     );
 
-    await interaction.channel.send({ embeds: [embed], components: [row] });
+    const recentMessages = await interaction.channel.messages.fetch({ limit: 100 });
+    const existingPanel = recentMessages.find((message) =>
+      message.author.id === client.user.id &&
+      message.components.some((componentRow) =>
+        componentRow.components.some((component) => component.customId?.startsWith("create-id-card:")),
+      ),
+    );
+    if (existingPanel) {
+      await existingPanel.edit({ embeds: [embed], components: [row] });
+    } else {
+      await interaction.channel.send({ embeds: [embed], components: [row] });
+    }
     await interaction.reply({
-      content: `Panel fikcyjnych kart RP został opublikowany. Gotowe karty będą wysyłane na kanał ${destination}.`,
+      content: `Panel fikcyjnych kart RP został ${existingPanel ? "zaktualizowany" : "opublikowany"}. Gotowe karty będą wysyłane na kanał ${destination}.`,
       ephemeral: true,
     });
     return;
@@ -6640,6 +6654,7 @@ client.on("interactionCreate", async (interaction) => {
 
 client.once("ready", async () => {
   schedulePoznanMorningMessage();
+  await migratePoznanSetupPanels();
   const panelChannelId = webhookConfigs[commandGuildId]?.weaponPermitPanelChannelId;
   if (!panelChannelId) return;
 
@@ -6669,6 +6684,62 @@ client.once("ready", async () => {
     console.error("Nie udało się zaktualizować nazwy istniejącego panelu pozwolenia:", error);
   }
 });
+
+async function migratePoznanSetupPanels() {
+  try {
+    const guild = await client.guilds.fetch(commandGuildId);
+    const allChannels = await guild.channels.fetch();
+    const config = webhookConfigs[commandGuildId] ?? {};
+    const configuredIds = new Set(
+      [config.weaponPermitPanelChannelId, config.idCardPanelChannelId].filter(Boolean),
+    );
+    const shouldDiscoverIdPanels = !config.idCardPanelChannelId;
+    let updated = 0;
+    for (const channel of allChannels.values()) {
+      if (channel.type !== ChannelType.GuildText) continue;
+      const isConfigured = configuredIds.has(channel.id);
+      if (!isConfigured && !shouldDiscoverIdPanels) continue;
+      let messages;
+      try {
+        messages = await channel.messages.fetch({ limit: 100 });
+      } catch {
+        continue;
+      }
+      for (const message of messages.values()) {
+        if (message.author.id !== client.user.id || !message.embeds.length) continue;
+        const componentIds = message.components.flatMap((row) => row.components.map((component) => component.customId ?? ""));
+        const isIdPanel = componentIds.some((id) => id.startsWith("create-id-card:"));
+        const isPermitPanel = componentIds.includes("weapon-permit:apply");
+        if (!isIdPanel && !isPermitPanel) continue;
+
+        const oldEmbed = message.embeds[0];
+        const title = isIdPanel ? "Fikcyjna karta postaci RP — Poznań RP" : "Pozwolenie na broń — Poznań RP";
+        const description = isIdPanel
+          ? "Kliknij przycisk poniżej, aby utworzyć **FIKCYJNĄ** kartę postaci dla Poznań RP."
+          : "Kliknij przycisk poniżej, aby wypełnić wniosek o pozwolenie na broń w Poznań RP w wiadomości prywatnej. Personel rozpatrzy go na osobnym kanale.";
+        const footer = isIdPanel
+          ? "Poznań RP • FIKCYJNA KARTA RP — NIE JEST DOKUMENTEM"
+          : "Poznań RP • Odpowiadaj na pytania po kolei. Wpisz „anuluj”, aby przerwać.";
+        const nextEmbed = EmbedBuilder.from(oldEmbed)
+          .setTitle(title)
+          .setDescription(description)
+          .setFooter({ text: footer });
+        const legacyContent = (message.content ?? "").replace(/polonia(?:\s+rp)?/gi, "Poznań RP");
+        const embedNeedsUpdate = oldEmbed.title !== title || oldEmbed.description !== description || oldEmbed.footer?.text !== footer;
+        if (embedNeedsUpdate || legacyContent !== message.content) {
+          await message.edit({ content: legacyContent, embeds: [nextEmbed], allowedMentions: { parse: [] } });
+          updated += 1;
+        }
+        if (isIdPanel && config.idCardPanelChannelId !== channel.id) {
+          await updateWebhookConfig(commandGuildId, { idCardPanelChannelId: channel.id });
+        }
+      }
+    }
+    if (updated) console.info(`Zaktualizowano ${updated} paneli dowodów i pozwoleń na Poznań RP.`);
+  } catch (error) {
+    console.error("Nie udało się zaktualizować starych paneli dowodów i pozwoleń:", error);
+  }
+}
 
 function schedulePoznanMorningMessage() {
   const channelId = process.env.ANNOUNCEMENT_CHANNEL_ID?.trim();
