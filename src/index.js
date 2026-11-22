@@ -176,7 +176,13 @@ const mafiaMapPath = path.join(__dirname, "..", mafiaMapFileName);
 const workCooldownMs = 60 * 60 * 1000;
 const dailyCooldownMs = 24 * 60 * 60 * 1000;
 const robberyCooldownMs = 5 * 60 * 1000;
+const fishingCooldownMs = 20 * 60 * 1000;
 const maxGamblingBet = 3000;
+const economyShopItems = {
+  radio: { name: "Radio policyjne", price: 600 },
+  burger: { name: "Burger", price: 250 },
+  badge: { name: "Odznaka kolekcjonerska", price: 1200 },
+};
 let activityCheckUpdateQueue = Promise.resolve();
 let economyUpdateQueue = Promise.resolve();
 let mafiaUpdateQueue = Promise.resolve();
@@ -363,7 +369,7 @@ function isRecord(value) {
 }
 
 function createEconomyAccount() {
-  return { wallet: 0, bank: 0, lastDailyAt: 0, lastWorkAt: 0, lastRobAt: 0 };
+  return { wallet: 0, bank: 0, lastDailyAt: 0, lastWorkAt: 0, lastRobAt: 0, lastFishAt: 0, inventory: {} };
 }
 
 function normalizeEconomyData(value) {
@@ -380,15 +386,16 @@ function normalizeEconomyData(value) {
     for (const [userId, account] of Object.entries(users)) {
       if (
         !isRecord(account) ||
-        !["wallet", "bank", "lastDailyAt", "lastWorkAt", "lastRobAt"].every(
+        !["wallet", "bank", "lastDailyAt", "lastWorkAt", "lastRobAt", "lastFishAt"].every(
           (key) => account[key] === undefined || (Number.isSafeInteger(account[key]) && account[key] >= 0),
         ) ||
         !Number.isSafeInteger(account.wallet) ||
-        !Number.isSafeInteger(account.bank)
+        !Number.isSafeInteger(account.bank) ||
+        (account.inventory !== undefined && (!isRecord(account.inventory) || Object.values(account.inventory).some((count) => !Number.isSafeInteger(count) || count < 0)))
       ) {
         throw new Error(`Nieprawidłowe dane ekonomii użytkownika ${userId} na serwerze ${guildId}.`);
       }
-      normalized[guildId][userId] = { ...createEconomyAccount(), ...account };
+      normalized[guildId][userId] = { ...createEconomyAccount(), ...account, inventory: { ...(account.inventory ?? {}) } };
     }
   }
   return normalized;
@@ -867,14 +874,17 @@ async function handleEconomyCommand(message) {
   if (command === "!help" || command === "!economy") {
     await send([
       "**Komendy ekonomii**",
-      "`!bal [@osoba]` — sprawdź portfel i bank.",
+      "`!bal` / `!balance` [@osoba] — sprawdź portfel i bank.",
       "`!economy add @osoba <kwota>` / `!economy remove @osoba <kwota>` — zarządzaj saldem (Zarządzanie serwerem).",
       "`!work` — zarób 100–1 000 zł raz na godzinę.",
       "`!daily` — odbierz 1 000–2 500 zł raz na 24 godziny.",
       "`!rob @osoba` — spróbuj ukraść losową kwotę; możesz zostać złapany.",
+      "`!fish` — łów ryby co 20 minut; możesz zarobić albo stracić trochę pieniędzy.",
       "`!50/50 <kwota>` — obstaw do 3 000 zł; wygrana daje taki sam zysk.",
       "`!slots <kwota>` — zagraj na automacie; para podwaja stawkę, a trzy takie same symbole dają 5× stawki.",
-      "`!deposit <kwota>` / `!withdraw <kwota>` — przelew między portfelem i bankiem.",
+      "`!dep <kwota|all>` / `!deposit <kwota|all>` — wpłać pieniądze do banku; `all` wpłaca cały portfel.",
+      "`!withdraw <kwota|all>` — wypłać pieniądze z banku; `all` wypłaca cały bank.",
+      "`!shop` — zobacz sklep. `!buy <przedmiot>` kupuje, a `!sell <przedmiot> [ilość|all]` sprzedaje przedmioty za połowę ceny.",
       "`!pay @osoba <kwota>` — przelej pieniądze.",
       "`!leaderboard` — ranking 20 najbogatszych osób na serwerze.",
     ].join("\n"));
@@ -925,26 +935,102 @@ async function handleEconomyCommand(message) {
     return true;
   }
 
-  if (command === "!deposit" || command === "!withdraw") {
-    const amount = parseEconomyAmount(args[1]);
-    if (!amount) {
-      await send(`Podaj prawidłową kwotę, np. \`${command} 500\`.`);
+  if (command === "!shop") {
+    await send([
+      "**Sklep ekonomii** (sprzedaż zwraca połowę ceny):",
+      ...Object.entries(economyShopItems).map(([key, item]) => `• **${item.name}** — ${formatZloty(item.price)} — kup: \`!buy ${key}\`, sprzedaj: \`!sell ${key} [ilość|all]\``),
+    ].join("\n"));
+    return true;
+  }
+
+  if (command === "!buy" || command === "!sell") {
+    const itemKey = args[1]?.toLowerCase();
+    const item = economyShopItems[itemKey];
+    if (!item || args.length > (command === "!buy" ? 2 : 3)) {
+      await send(command === "!buy" ? "Użycie: `!buy <przedmiot>`. Zobacz `!shop`." : "Użycie: `!sell <przedmiot> [ilość|all]`. Zobacz `!shop`.");
       return true;
     }
-    const depositing = command === "!deposit";
+    const selling = command === "!sell";
+    const quantity = selling ? (args[2]?.toLowerCase() === "all" ? "all" : args[2] ? parseEconomyAmount(args[2]) : 1) : 1;
+    if (!quantity) {
+      await send("Podaj prawidłową liczbę przedmiotów albo `all`.");
+      return true;
+    }
+    const unitPrice = selling ? Math.floor(item.price / 2) : item.price;
+    const result = await updateEconomy((data) => {
+      const account = getEconomyAccount(data, message.guild.id, message.author.id);
+      if (selling) {
+        const count = quantity === "all" ? (account.inventory[itemKey] ?? 0) : quantity;
+        if (!count || (account.inventory[itemKey] ?? 0) < count) return { insufficient: true };
+        const total = count * unitPrice;
+        if (!Number.isSafeInteger(account.wallet + total)) return { overflow: true };
+        account.inventory[itemKey] -= count;
+        account.wallet += total;
+        return { count, total };
+      }
+      if (account.wallet < unitPrice) return { insufficient: true };
+      account.inventory[itemKey] = (account.inventory[itemKey] ?? 0) + 1;
+      account.wallet -= unitPrice;
+      return { count: 1, total: unitPrice };
+    });
+    await send(result.insufficient
+      ? selling ? `Nie masz tyle: **${item.name}**.` : `Nie masz wystarczająco w portfelu na **${item.name}**.`
+      : result.overflow ? "Ta sprzedaż przekroczyłaby bezpieczny limit salda."
+        : selling ? `Sprzedano **${result.count}× ${item.name}** za **${formatZloty(result.total)}**.`
+          : `Kupiono **${item.name}** za **${formatZloty(result.total)}**.`);
+    return true;
+  }
+
+  if (command === "!fish") {
+    const result = await updateEconomy((data) => {
+      const account = getEconomyAccount(data, message.guild.id, message.author.id);
+      const remaining = account.lastFishAt + fishingCooldownMs - Date.now();
+      if (account.lastFishAt && remaining > 0) return { remaining };
+      account.lastFishAt = Date.now();
+      if (Math.random() < 0.2) {
+        const loss = Math.min(account.wallet, randomInteger(50, 200));
+        account.wallet -= loss;
+        return { loss, caught: true };
+      }
+      const amount = randomInteger(150, 700);
+      if (!Number.isSafeInteger(account.wallet + amount)) return { overflow: true };
+      account.wallet += amount;
+      return { amount };
+    });
+    await send(result.remaining
+      ? `Ryby biorą ponownie za **${formatCooldown(result.remaining)}**.`
+      : result.overflow ? "Twoje saldo osiągnęło bezpieczny limit."
+        : result.caught ? `🎣 Zgubiłeś sprzęt i tracisz **${formatZloty(result.loss)}**.`
+          : `🎣 Dobry połów! Zarabiasz **${formatZloty(result.amount)}**.`);
+    return true;
+  }
+
+  if (command === "!deposit" || command === "!dep" || command === "!withdraw") {
+    const depositing = command === "!deposit" || command === "!dep";
+    const all = args[1]?.toLowerCase() === "all";
+    if (!all && args.length !== 2) {
+      await send(`Podaj kwotę lub \`all\`, np. \`${command} 500\` albo \`${command} all\`.`);
+      return true;
+    }
+    const amount = all ? null : parseEconomyAmount(args[1]);
+    if (!all && !amount) {
+      await send(`Podaj prawidłową kwotę lub \`all\`, np. \`${command} 500\`.`);
+      return true;
+    }
     const result = await updateEconomy((data) => {
       const currentAccount = getEconomyAccount(data, message.guild.id, message.author.id);
       const source = depositing ? "wallet" : "bank";
       const destination = depositing ? "bank" : "wallet";
-      if (currentAccount[source] < amount) return false;
-      currentAccount[source] -= amount;
-      currentAccount[destination] += amount;
-      return true;
+      const transferAmount = all ? currentAccount[source] : amount;
+      if (!transferAmount || currentAccount[source] < transferAmount) return null;
+      currentAccount[source] -= transferAmount;
+      currentAccount[destination] += transferAmount;
+      return transferAmount;
     });
     await send(
       result
-        ? `${depositing ? "Wpłacono" : "Wypłacono"} **${formatZloty(amount)}** ${depositing ? "do banku" : "z banku"}.`
-        : `Nie masz wystarczających środków ${depositing ? "w portfelu" : "w banku"}.`,
+        ? `${depositing ? "Wpłacono" : "Wypłacono"} **${formatZloty(result)}** ${depositing ? "do banku" : "z banku"}.`
+        : `Nie masz środków ${depositing ? "w portfelu" : "w banku"} do przeniesienia.`,
     );
     return true;
   }
@@ -2980,8 +3066,10 @@ async function handleCommand(interaction) {
           {
             name: "Saldo i zarabianie",
             value: [
-              "`!bal [@osoba]` — sprawdza portfel, bank i łączne saldo.",
+              "`!bal` / `!balance` [@osoba] — sprawdza portfel, bank i łączne saldo.",
               "`!work` — zarabiasz losowo **100–1 000 zł**, raz na godzinę.",
+              "`!fish` — co 20 minut możesz zarobić 150–700 zł; jest też 20% szansy na stratę do 200 zł.",
+              "`!shop`, `!buy <przedmiot>`, `!sell <przedmiot> [ilość|all]` — sklep i handel; sprzedaż zwraca połowę ceny.",
               "`!daily` — odbierasz **1 000–2 500 zł**, raz na 24 godziny.",
               "`!leaderboard` — pokazuje 20 najbogatszych osób na serwerze.",
               "`!economy add @osoba <kwota>` / `!economy remove @osoba <kwota>` — zmienia saldo; wymaga uprawnienia Zarządzanie serwerem.",
@@ -2990,8 +3078,8 @@ async function handleCommand(interaction) {
           {
             name: "Bank i przelewy",
             value: [
-              "`!deposit <kwota>` — wpłata z portfela do banku.",
-              "`!withdraw <kwota>` — wypłata z banku do portfela.",
+              "`!dep <kwota|all>` / `!deposit <kwota|all>` — wpłata do banku; `all` wpłaca cały portfel.",
+              "`!withdraw <kwota|all>` — wypłata z banku; `all` wypłaca cały bank.",
               "`!pay @osoba <kwota>` — przelew z portfela do innej osoby.",
             ].join("\n"),
           },
