@@ -16,7 +16,7 @@ test("creates a PNG RP profile card with the expected dimensions", async () => {
     givenNames: "Alex",
     dateOfBirth: "01.01.2000",
     gender: "N",
-    citizenship: "Polonia",
+    citizenship: "Poznań RP",
     issueDate: "20.11.2026",
   });
 
