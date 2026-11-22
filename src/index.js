@@ -154,7 +154,8 @@ const weaponPermitQuestions = [
   },
 ];
 const webhookConfigPath = path.join(__dirname, "..", "data", "eh-webhook-config.json");
-const announcementGifPath = path.join(__dirname, "..", "zyciowka-rp.gif");
+const announcementVideoPath = path.join(__dirname, "..", "zyciowka-rp.mp4");
+const announcementVideoMaxBytes = 8 * 1024 * 1024;
 const weaponPermitIdentityRequestsPath = path.join(
   __dirname,
   "..",
@@ -5996,15 +5997,17 @@ async function handleModal(interaction) {
       .setColor(0x5865f2)
       .setTitle(title)
       .setDescription(content)
-      .setImage("attachment://zyciowka-rp.gif")
-      .setFooter({ text: `Ogłoszenie od ${interaction.user.tag} • Animowany GIF` })
+      .setFooter({ text: `Ogłoszenie od ${interaction.user.tag} • Wideo MP4 w załączniku` })
       .setTimestamp();
-    await fs.access(announcementGifPath).catch((error) => {
+    const videoStats = await fs.stat(announcementVideoPath).catch((error) => {
       if (error.code === "ENOENT") {
-        throw new Error(`Nie znaleziono animacji ogłoszenia: ${announcementGifPath}`);
+        throw new Error(`Nie znaleziono wideo ogłoszenia: ${announcementVideoPath}`);
       }
       throw error;
     });
+    if (!videoStats.isFile() || videoStats.size > announcementVideoMaxBytes) {
+      throw new Error("Wideo ogłoszenia musi być plikiem MP4 o rozmiarze nie większym niż 8 MB.");
+    }
     const botMember = await interaction.guild.members.fetchMe();
     if (!botMember.permissionsIn(destination).has(PermissionFlagsBits.AttachFiles)) {
       throw new Error(`Bot potrzebuje uprawnienia Załączanie plików na ${destination}.`);
@@ -6013,8 +6016,8 @@ async function handleModal(interaction) {
     await destination.send({
       embeds: [announcement],
       files: [
-        new AttachmentBuilder(announcementGifPath, {
-          name: "zyciowka-rp.gif",
+        new AttachmentBuilder(announcementVideoPath, {
+          name: "zyciowka-rp.mp4",
         }),
       ],
       allowedMentions: { parse: [] },
