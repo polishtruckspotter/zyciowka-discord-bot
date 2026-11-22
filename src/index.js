@@ -3636,10 +3636,11 @@ async function handleCommand(interaction) {
       const requiredPermissions =
         PermissionFlagsBits.ViewChannel |
         PermissionFlagsBits.SendMessages |
-        PermissionFlagsBits.EmbedLinks;
+        PermissionFlagsBits.EmbedLinks |
+        PermissionFlagsBits.ReadMessageHistory;
       if (!permissions.has(requiredPermissions)) {
         await interaction.reply({
-          content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości i Osadzanie linków na ${channel}.`,
+          content: `Bot potrzebuje uprawnień Wyświetlanie kanału, Wysyłanie wiadomości, Osadzanie linków i Czytanie historii wiadomości na ${channel}.`,
           ephemeral: true,
         });
         return;
@@ -3664,9 +3665,20 @@ async function handleCommand(interaction) {
         .setLabel("Pozwolenie na broń")
         .setStyle(ButtonStyle.Primary),
     );
-    await panelChannel.send({ embeds: [panelEmbed], components: [panelRow] });
+    const recentMessages = await panelChannel.messages.fetch({ limit: 100 });
+    const existingPanel = recentMessages.find((message) =>
+      message.author.id === client.user.id &&
+      message.components.some((row) =>
+        row.components.some((component) => component.customId === "weapon-permit:apply"),
+      ),
+    );
+    if (existingPanel) {
+      await existingPanel.edit({ embeds: [panelEmbed], components: [panelRow] });
+    } else {
+      await panelChannel.send({ embeds: [panelEmbed], components: [panelRow] });
+    }
     await interaction.reply({
-      content: `Panel wniosków opublikowano na ${panelChannel}. Wnioski trafią na ${reviewChannel}; zaakceptowanym osobom zostanie nadana rola ${permitRole}.`,
+      content: `${existingPanel ? "Panel wniosków zaktualizowano" : "Panel wniosków opublikowano"} na ${panelChannel}. Wnioski trafią na ${reviewChannel}; zaakceptowanym osobom zostanie nadana rola ${permitRole}.`,
       ephemeral: true,
     });
     return;
