@@ -3817,6 +3817,37 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
+client.once("ready", async () => {
+  const panelChannelId = webhookConfigs[commandGuildId]?.weaponPermitPanelChannelId;
+  if (!panelChannelId) return;
+
+  try {
+    const channel = await client.channels.fetch(panelChannelId);
+    if (!channel?.isTextBased() || !channel.messages) return;
+    const messages = await channel.messages.fetch({ limit: 100 });
+    const existingPanels = messages.filter((message) =>
+      message.author.id === client.user.id &&
+      message.embeds.length > 0 &&
+      message.components.some((row) =>
+        row.components.some((component) => component.customId === "weapon-permit:apply"),
+      ),
+    );
+
+    let updatedCount = 0;
+    for (const panel of existingPanels.values()) {
+      if (panel.embeds[0].title === "Pozwolenie na broń — Poznań RP") continue;
+      const embed = EmbedBuilder.from(panel.embeds[0]).setTitle("Pozwolenie na broń — Poznań RP");
+      await panel.edit({ embeds: [embed] });
+      updatedCount += 1;
+    }
+    if (updatedCount) {
+      console.info(`Zaktualizowano nazwę na ${updatedCount} istniejących panelach pozwoleń na broń.`);
+    }
+  } catch (error) {
+    console.error("Nie udało się zaktualizować nazwy istniejącego panelu pozwolenia:", error);
+  }
+});
+
 const missing = getMissingConfiguration(["DISCORD_TOKEN", "CLIENT_ID"]);
 if (missing.length) {
   console.error(`Brak wymaganych zmiennych środowiskowych: ${missing.join(", ")}. Skopiuj .env.example do .env i uzupełnij wartości.`);
