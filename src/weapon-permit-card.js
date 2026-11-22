@@ -1,7 +1,7 @@
 const path = require("node:path");
 const { createCanvas, loadImage } = require("@napi-rs/canvas");
 
-const templatePath = path.join(__dirname, "..", "Legitymacja broni Polonia RP.png");
+const templatePath = path.join(__dirname, "..", "legitymacje.webp");
 
 async function createWeaponPermitCardImage({ profile, fullName, birthDetails, address, weaponType, issuerName, issuedAt }) {
   const template = await loadImage(templatePath);
@@ -26,51 +26,51 @@ async function createWeaponPermitCardImage({ profile, fullName, birthDetails, ad
   };
 
   // Write the supplied RP application details into the template's labeled fields.
-  drawValue(fullName, 460, 258, 540);
-  drawValue(birthDetails, 460, 376, 540);
-  drawValue(address, 460, 486, 540);
-  drawValue(weaponType, 460, 594, 540);
-  drawValue("Polonia RP", 460, 678, 540);
-  drawValue(issuedAt, 460, 754, 540);
+  drawValue(fullName, 320, 185, 375, 18);
+  drawValue(birthDetails, 320, 267, 375, 18);
+  drawValue(address, 320, 349, 375, 18);
+  drawValue(weaponType, 320, 424, 375, 18);
+  drawValue("Poznań RP", 320, 480, 375, 18);
+  drawValue(issuedAt, 320, 541, 375, 18);
   // Keep the account ID below the template's printed label and above the seal.
-  drawValue(profile.id, 1210, 382, 260, 21, "center");
+  drawValue(profile.id, 845, 271, 180, 16, "center");
 
   // Put the Roblox portrait in the blank left column, separate from the printed seal and fields.
   context.save();
   context.beginPath();
-  context.arc(250, 432, 112, 0, Math.PI * 2);
+  context.arc(175, 300, 78, 0, Math.PI * 2);
   context.clip();
-  context.drawImage(avatar, 138, 320, 224, 224);
+  context.drawImage(avatar, 97, 222, 156, 156);
   context.restore();
   context.beginPath();
-  context.arc(250, 432, 112, 0, Math.PI * 2);
+  context.arc(175, 300, 78, 0, Math.PI * 2);
   context.strokeStyle = "rgba(255,255,255,0.95)";
-  context.lineWidth = 5;
+  context.lineWidth = 4;
   context.stroke();
 
-  drawValue(profile.displayName || profile.username, 125, 692, 320, 21);
-  drawValue(issuerName, 1195, 801, 250, 21, "center");
+  drawValue(profile.displayName || profile.username, 82, 514, 220, 15);
+  drawValue(issuerName, 830, 603, 175, 15, "center");
 
   // Cover the preprinted placeholder and draw one readable RP card number.
   context.save();
   context.fillStyle = "#f5e8c9";
   context.beginPath();
-  context.roundRect(542, 875, 386, 78, 8);
+  context.roundRect(378, 622, 268, 55, 8);
   context.fill();
   context.strokeStyle = "rgba(80,60,20,0.28)";
-  context.lineWidth = 2;
+  context.lineWidth = 1.5;
   context.stroke();
   context.restore();
-  drawValue(`LB ${String(profile.id).slice(-8).padStart(8, "0")}`, 735, 929, 360, 32, "center");
+  drawValue(`LB ${String(profile.id).slice(-8).padStart(8, "0")}`, 512, 660, 250, 23, "center");
 
   // Make the roleplay-only status visible on the card itself.
   context.save();
   context.fillStyle = "rgba(255,255,255,0.88)";
-  context.fillRect(1035, 193, 390, 44);
+  context.fillRect(690, 130, 300, 36);
   context.fillStyle = "#9b1c1c";
-  context.font = "700 22px Arial";
+  context.font = "700 16px Arial";
   context.textAlign = "center";
-  context.fillText("DOKUMENT WYŁĄCZNIE DO ROLEPLAY", 1230, 222, 380);
+  context.fillText("DOKUMENT WYŁĄCZNIE DO ROLEPLAY", 840, 154, 290);
   context.restore();
 
   return canvas.toBuffer("image/png");

@@ -367,7 +367,7 @@ function createEconomyEmbed(description) {
     .setColor(0xf1c40f)
     .setTitle("💰 Ekonomia serwerowa")
     .setDescription(description)
-    .setFooter({ text: "Polonia RP • Saldo jest zapisywane automatycznie." })
+    .setFooter({ text: "Poznań RP • Saldo jest zapisywane automatycznie." })
     .setTimestamp();
 }
 
@@ -990,7 +990,7 @@ function buildRobloxBanEmbed({ playerName, duration, reason, appealable, staff, 
       { name: "Powód", value: limitField(reason, 500) },
       { name: "Odwołanie", value: limitField(appealable, 80) },
     )
-    .setFooter({ text: "Polonia RP × Bany Emergency Hamburg" })
+    .setFooter({ text: "Poznań RP × Bany Emergency Hamburg" })
     .setTimestamp();
 
   if (originalLog) {
@@ -1195,7 +1195,7 @@ async function handleGameWebhookMessage(message) {
         : []),
       { name: "Webhook źródłowy", value: message.author.username.slice(0, 256) },
     )
-    .setFooter({ text: "Polonia RP × Emergency Hamburg" })
+    .setFooter({ text: "Poznań RP × Emergency Hamburg" })
     .setTimestamp(message.createdAt);
   await destination.send({
     embeds: [embed],
@@ -1434,7 +1434,7 @@ async function handleCommand(interaction) {
             "Bot opublikuje kartę pojazdu na kanale rejestracji i oznaczy wybranego właściciela.",
           ].join("\n"),
         )
-        .setFooter({ text: "Rejestracja pojazdów — Polonia RP" });
+        .setFooter({ text: "Rejestracja pojazdów — Poznań RP" });
       await instructionsChannel.send({
         embeds: [instructionsEmbed],
         allowedMentions: { parse: [] },
@@ -1758,7 +1758,7 @@ async function handleCommand(interaction) {
 
     const embed = new EmbedBuilder()
       .setColor(0x2ecc71)
-      .setTitle("Weryfikacja — Polonia RP")
+      .setTitle("Weryfikacja — Poznań RP")
       .setDescription(
         `Kliknij przycisk poniżej i rozwiąż krótkie działanie matematyczne.\nPo poprawnej odpowiedzi otrzymasz role ${rolesToGive.join(" i ")}, a rola ${roleToRemove} zostanie zabrana.`,
       )
@@ -1827,9 +1827,9 @@ async function handleCommand(interaction) {
 
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
-      .setTitle("Ogłoszenia — Polonia RP")
+      .setTitle("Ogłoszenia — Poznań RP")
       .setDescription("Kliknij przycisk, aby napisać i opublikować ogłoszenie.")
-      .setFooter({ text: "Ogłoszenia × Polonia RP" });
+      .setFooter({ text: "Ogłoszenia × Poznań RP" });
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`create-announcement:${destination.id}:${roleToPing?.id ?? "none"}`)
@@ -1884,7 +1884,7 @@ async function handleCommand(interaction) {
     });
     const panelEmbed = new EmbedBuilder()
       .setColor(0x5865f2)
-      .setTitle("Pozwolenie na broń — Polonia RP")
+      .setTitle("Pozwolenie na broń — Poznań RP")
       .setDescription(
         "Kliknij przycisk poniżej, aby wypełnić wniosek w wiadomości prywatnej. Personel rozpatrzy go na osobnym kanale.",
       )
@@ -1953,7 +1953,7 @@ async function handleCommand(interaction) {
           ? "Wybierz rodzaj akcji do zapisania. Raport zostanie wysłany na kanał przeznaczony na bany i wyrzucenia."
           : "Zapisz użycie admin car lub fly. Raport zostanie wysłany na osobny kanał pozostałych akcji.",
       )
-      .setFooter({ text: "Logi moderacji × Polonia RP" });
+      .setFooter({ text: "Logi moderacji × Poznań RP" });
     const actions = isBanKickPanel
       ? [
           ["kick", "Wyrzucenie", ButtonStyle.Secondary],
@@ -2006,7 +2006,7 @@ async function handleCommand(interaction) {
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
       .setTitle("Fikcyjna karta postaci RP")
-      .setDescription("Kliknij przycisk poniżej, aby utworzyć **FIKCYJNĄ** kartę postaci dla Polonia RP.")
+      .setDescription("Kliknij przycisk poniżej, aby utworzyć **FIKCYJNĄ** kartę postaci dla Poznań RP.")
       .setFooter({ text: "FIKCYJNA KARTA RP — NIE JEST DOKUMENTEM" });
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -2716,7 +2716,7 @@ async function handleButton(interaction) {
     const embed = interaction.message.embeds[0];
     if (
       interaction.message.author.id !== client.user.id ||
-      embed?.footer?.text !== "Polonia RP × Bany Emergency Hamburg"
+      embed?.footer?.text !== "Poznań RP × Bany Emergency Hamburg"
     ) {
       throw new Error("Można edytować wyłącznie wpisy o banach utworzone przez tego bota.");
     }
@@ -2760,7 +2760,7 @@ async function handleButton(interaction) {
     const embed = interaction.message.embeds[0];
     if (
       interaction.message.author.id !== client.user.id ||
-      embed?.footer?.text !== "Polonia RP × Emergency Hamburg"
+      embed?.footer?.text !== "Poznań RP × Emergency Hamburg"
     ) {
       throw new Error("Można edytować wyłącznie wpisy o wyrzuceniach utworzone przez tego bota.");
     }
@@ -2976,7 +2976,7 @@ async function handleButton(interaction) {
 
   const modal = new ModalBuilder()
     .setCustomId(`verify-math-answer:${giveRoleIds.join(":")}:${removeRoleId}`)
-    .setTitle("Weryfikacja Polonia RP");
+    .setTitle("Weryfikacja Poznań RP");
   const answerInput = new TextInputBuilder()
     .setCustomId("answer")
     .setLabel(`Ile wynosi ${question}?`)
@@ -3183,7 +3183,7 @@ async function handleModal(interaction) {
     const existingEmbed = message.embeds[0];
     if (
       message.author.id !== client.user.id ||
-      existingEmbed?.footer?.text !== "Polonia RP × Emergency Hamburg"
+      existingEmbed?.footer?.text !== "Poznań RP × Emergency Hamburg"
     ) {
       throw new Error("Można edytować wyłącznie wpisy o wyrzuceniach utworzone przez tego bota.");
     }
@@ -3229,7 +3229,7 @@ async function handleModal(interaction) {
     const existingEmbed = message.embeds[0];
     if (
       message.author.id !== client.user.id ||
-      existingEmbed?.footer?.text !== "Polonia RP × Bany Emergency Hamburg"
+      existingEmbed?.footer?.text !== "Poznań RP × Bany Emergency Hamburg"
     ) {
       throw new Error("Można edytować wyłącznie wpisy o banach utworzone przez tego bota.");
     }
@@ -3441,7 +3441,7 @@ async function handleModal(interaction) {
         { name: "Powód", value: reason },
         { name: "Osoba zgłaszająca", value: interaction.user.tag },
       )
-      .setFooter({ text: "Emergency Hamburg × Polonia RP" })
+      .setFooter({ text: "Emergency Hamburg × Poznań RP" })
       .setTimestamp();
 
     if (action === "admin-car" || action === "fly") {

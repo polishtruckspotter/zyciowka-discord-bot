@@ -38,7 +38,7 @@ async function createFictionalRpCardImage({
 
   context.fillStyle = "#a5b4fc";
   context.font = "700 30px Arial";
-  context.fillText("POLONIA RP  /  KARTA POSTACI", 64, 72);
+  context.fillText("POZNAŃ RP  /  KARTA POSTACI", 64, 72);
   context.fillStyle = "#fca5a5";
   context.font = "700 20px Arial";
   context.textAlign = "right";
@@ -105,7 +105,7 @@ async function createFictionalRpCardImage({
   ].forEach(([label, value], index) => drawField(label, value, 360, fieldRows[index], 340));
   [
     ["Obywatelstwo / kraj", citizenship],
-    ["Organ wydający", "Polonia RP"],
+    ["Organ wydający", "Poznań RP"],
     ["Data wydania", issueDate],
     ["Konto Roblox", `@${profile.username}`],
   ].forEach(([label, value], index) => drawField(label, value, 760, fieldRows[index], 340));

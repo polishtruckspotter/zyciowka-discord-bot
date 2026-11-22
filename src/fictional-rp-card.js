@@ -1,7 +1,7 @@
 const path = require("node:path");
 const { createCanvas, loadImage } = require("@napi-rs/canvas");
 
-const templatePath = path.join(__dirname, "..", "dowody_polonia_rp_fikcyjny.png");
+const templatePath = path.join(__dirname, "..", "poznan rp dowody.webp");
 
 async function createFictionalRpCardImage({
   profile,
@@ -61,7 +61,7 @@ async function createFictionalRpCardImage({
   // These identifiers are deliberately marked as roleplay-only, never real identity data.
   drawValue("TYLKO RP", 625, 61, 180, 13);
   drawValue(citizenship, 625, 99, 190, 13);
-  drawValue("Polonia RP", 541, 154, 270, 14);
+  drawValue("Poznań RP", 541, 154, 270, 14);
   drawValue(`RP-${String(profile.id).slice(-8)}`, 857, 61, 145, 12);
   drawValue(issueDate, 857, 100, 145, 13);
 

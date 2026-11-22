@@ -1,4 +1,4 @@
-# Polonia RP | Bot
+# Poznań RP | Bot
 
 Polskojęzyczny bot do weryfikacji członków i podstawowej moderacji serwera Discord. Weryfikacja polega na rozwiązaniu prostego działania matematycznego i nadaniu skonfigurowanej roli Discord. Nie sprawdza obecności gracza ani jego konta w Roblox/Emergency Hamburg.
 
