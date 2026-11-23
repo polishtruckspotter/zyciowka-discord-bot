@@ -157,8 +157,8 @@ const weaponPermitQuestions = [
   },
 ];
 const webhookConfigPath = path.join(__dirname, "..", "data", "eh-webhook-config.json");
-const announcementVideoPath = path.join(__dirname, "..", "zyciowka-rp.mp4");
-const announcementVideoMaxBytes = 8 * 1024 * 1024;
+const announcementGifPath = path.join(__dirname, "..", "zyciowka-rp.gif");
+const announcementGifMaxBytes = 8 * 1024 * 1024;
 const weaponPermitIdentityRequestsPath = path.join(
   __dirname,
   "..",
@@ -6114,16 +6114,17 @@ async function handleModal(interaction) {
       .setColor(0x5865f2)
       .setTitle(title)
       .setDescription(content)
-      .setFooter({ text: `Ogłoszenie od ${interaction.user.tag} • Wideo MP4 w załączniku` })
+      .setImage("attachment://zyciowka-rp.gif")
+      .setFooter({ text: `Ogłoszenie od ${interaction.user.tag} • animacja GIF` })
       .setTimestamp();
-    const videoStats = await fs.stat(announcementVideoPath).catch((error) => {
+    const gifStats = await fs.stat(announcementGifPath).catch((error) => {
       if (error.code === "ENOENT") {
-        throw new Error(`Nie znaleziono wideo ogłoszenia: ${announcementVideoPath}`);
+        throw new Error(`Nie znaleziono animacji GIF ogłoszenia: ${announcementGifPath}`);
       }
       throw error;
     });
-    if (!videoStats.isFile() || videoStats.size > announcementVideoMaxBytes) {
-      throw new Error("Wideo ogłoszenia musi być plikiem MP4 o rozmiarze nie większym niż 8 MB.");
+    if (!gifStats.isFile() || gifStats.size > announcementGifMaxBytes) {
+      throw new Error("Animacja GIF ogłoszenia musi mieć rozmiar nie większy niż 8 MB.");
     }
     const botMember = await interaction.guild.members.fetchMe();
     if (!botMember.permissionsIn(destination).has(PermissionFlagsBits.AttachFiles)) {
@@ -6133,8 +6134,8 @@ async function handleModal(interaction) {
     await destination.send({
       embeds: [announcement],
       files: [
-        new AttachmentBuilder(announcementVideoPath, {
-          name: "zyciowka-rp.mp4",
+        new AttachmentBuilder(announcementGifPath, {
+          name: "zyciowka-rp.gif",
         }),
       ],
       allowedMentions: { parse: [] },
