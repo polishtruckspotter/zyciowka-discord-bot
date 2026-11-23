@@ -233,6 +233,18 @@ const createCommand = new SlashCommandBuilder()
               .addChannelTypes(ChannelType.GuildText)
               .setRequired(true),
           ),
+      )
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("administracja")
+          .setDescription("Publikuje i automatycznie aktualizuje skład administracji.")
+          .addChannelOption((option) =>
+            option
+              .setName("kanal")
+              .setDescription("Kanał, na który bot wyśle zestawienie.")
+              .addChannelTypes(ChannelType.GuildText)
+              .setRequired(true),
+          ),
       ),
   )
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
