@@ -1,7 +1,7 @@
 const path = require("node:path");
 const { createCanvas, loadImage } = require("@napi-rs/canvas");
 
-const templatePath = path.join(__dirname, "..", "poznan rp dowody.webp");
+const templatePath = path.join(__dirname, "..", "better dowody .webp");
 
 async function createFictionalRpCardImage({
   profile,
@@ -28,12 +28,12 @@ async function createFictionalRpCardImage({
   const context = canvas.getContext("2d");
   context.drawImage(template, 0, 0);
 
-  // Keep the portrait in the open lower-left area, clear of the printed labels.
+  // Replace the template's portrait placeholder with the Roblox character image.
   context.save();
   context.beginPath();
-  context.arc(105, 315, 55, 0, Math.PI * 2);
+  context.arc(570, 78, 27, 0, Math.PI * 2);
   context.clip();
-  context.drawImage(avatar, 50, 260, 110, 110);
+  context.drawImage(avatar, 543, 51, 54, 54);
   context.restore();
 
   const drawValue = (value, x, y, maxWidth, fontSize = 15) => {
@@ -46,18 +46,15 @@ async function createFictionalRpCardImage({
     context.fillText(text, x, y, maxWidth);
   };
 
-  // Values are placed below their matching printed labels.
-  drawValue(surname, 198, 222, 275);
-  drawValue(givenNames, 198, 267, 275);
-  drawValue(surname, 198, 312, 200);
-  drawValue(dateOfBirth, 190, 400, 155);
-  drawValue(gender, 360, 400, 105);
-
-  // These identifiers are deliberately marked as roleplay-only, never real identity data.
-  drawValue("TYLKO RP", 627, 142, 175, 13);
-  drawValue(citizenship, 615, 179, 175, 13);
-  drawValue(`RP-${String(profile.id).slice(-8)}`, 858, 142, 145, 12);
-  drawValue(issueDate, 858, 179, 145, 13);
+  // Values sit directly below the corresponding labels on the two-sided template.
+  drawValue(surname, 195, 124, 285, 13);
+  drawValue(givenNames, 195, 168, 285, 13);
+  drawValue(surname, 195, 211, 285, 13);
+  drawValue(dateOfBirth, 194, 319, 150, 13);
+  drawValue(gender, 361, 319, 95, 13);
+  drawValue(citizenship, 617, 97, 170, 12);
+  drawValue("Poznań RP", 542, 180, 280, 12);
+  drawValue(issueDate, 855, 97, 145, 12);
 
   return canvas.toBuffer("image/png");
 }
