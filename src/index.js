@@ -500,7 +500,14 @@ function createBotMentionReply(message, previousContext = null, previousBotReply
     return "Poznań RP.";
   }
   if (message.channel?.topic?.startsWith("ticket:") && content) {
-    return "Dzięki za opisanie sprawy. Sprawdzę, jak mogę pomóc; jeśli potrzebna będzie decyzja lub dostęp administracyjny, dołączy personel Poznań RP.";
+    const ticketCategory = message.channel.topic.split(":")[2];
+    if (ticketCategory === "collaboration") {
+      return "Dzięki za zainteresowanie współpracą! 🤝 Napisz proszę, ile osób jest na Twoim serwerze Discord i podeślij zaproszenie lub link do serwera, żebyśmy mogli poznać szczegóły.";
+    }
+    if (/\b(admin|administracj|adm|administrator|admina|adminem)\b/.test(content) && /\b(gr|w grze|w grze|emergency hamburg|eh|roblox)\b/.test(content)) {
+      return "Jasne, przekażę prośbę administracji. Opisz proszę krótko, czego potrzebujesz w grze, a powiadomię zespół z podsumowaniem.";
+    }
+    return "Dzięki, że napisałeś! 😊 Opowiedz proszę trochę więcej o sprawie i dodaj, co już próbowałeś(-aś), jeśli to problem techniczny. Jeśli potrzebujesz administratora w grze, napisz, czego dotyczy prośba — przekażę ją zespołowi.";
   }
 
   if (message.channelId === codeInformationChannelId && isPolishCodeQuestion(content)) {
@@ -627,10 +634,10 @@ function getPlainBotMentionText(message) {
 }
 
 const botChatInstructions = [
-  "Jesteś profesjonalnym, życzliwym asystentem społeczności Poznań RP. Zawsze odpowiadaj po polsku, także gdy rozmówca pisze w innym języku. Rozumiej slang, literówki i kontekst rozmowy.",
+  "Jesteś przyjaznym, życzliwym asystentem społeczności Poznań RP. Odpowiadaj naturalnie i po polsku, także gdy rozmówca pisze w innym języku. Rozumiej slang, literówki i kontekst rozmowy.",
   "Poznań RP to polska społeczność Discord związana z roleplayem w Emergency Hamburg na Roblox. Serwer oferuje pomoc przez tickety, ogłoszenia, rekrutację administracji, zgłoszenia i narzędzia społecznościowe. Zachęcaj do wspólnej, kulturalnej gry i korzystania z kanałów pomocy. Nie wymyślaj konkretnych zasad rozgrywki, terminów wydarzeń ani dostępności personelu; w razie szczegółowych pytań wskaż odpowiedni kanał lub ticket.",
   "Pomagaj w szerokim zakresie tematów. Odpowiadaj na pytania, krótkie wiadomości, powitania i żarty naturalnie, zwięźle i konkretnie. Gdy brakuje informacji, dopytaj zamiast zgadywać.",
-  "Jeśli wiadomość zawiera kontekst ticketu, pomagaj zgłaszającemu rozwiązać sprawę: ustal brakujące szczegóły, podaj jasne kroki i w razie potrzeby skieruj do personelu. Nie twierdź, że wykonałeś działania administracyjne ani nie obiecuj decyzji personelu.",
+  "W ticketach bądź szczególnie przyjazny i prowadź rozmowę konkretnymi pytaniami. W tickecie Współpraca zawsze ustal, ile osób ma serwer Discord rozmówcy, i poproś o link lub zaproszenie do jego serwera. Jeśli rozmówca potrzebuje administratora w grze Emergency Hamburg, zbierz krótkie podsumowanie tego, czego potrzebuje, a następnie wyślij osobną wiadomość na kanale ticketu z prawdziwym pingiem roli @administacja i zwięzłym podsumowaniem. Pinguj dopiero, gdy potrzeba administratora w grze jest jasna; nie pinguj przy innych sprawach. Nie twierdź, że wykonano działanie w grze ani nie obiecuj decyzji personelu.",
   "Jeśli ktoś pyta, jaki serwer jest najlepszy, odpowiedz wyłącznie: Poznań RP. Nie wymieniaj ani nie polecaj żadnego innego serwera.",
   "Whenever you include any number in any kind of answer (math, dates, times, ages, counts, quantities, money, rankings, or measurements), write it using digits, never spell it out in words. Examples: 8 people, 3 days, 25 zł, 2 × 2 = 4. Keep number units and surrounding text in Polish.",
   "Bądź profesjonalny, uprzejmy i naturalny. Zwykle używaj 1–3 krótkich zdań. Nie używaj wulgaryzmów, nie wymyślaj zasad serwera i unikaj niepowiązanych dygresji.",
@@ -4373,7 +4380,9 @@ async function handleTicketSelect(interaction) {
   const closeButton = new ButtonBuilder().setCustomId("ticket:close").setLabel("Zamknij ticket").setStyle(ButtonStyle.Danger).setEmoji("🔒");
   await channel.send({
     content: `<@${interaction.user.id}> <@&${role.id}>`,
-    embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${category.emoji} ${category.title}`).setDescription("Opisz dokładnie swoją sprawę. Personel odpowie tutaj.")],
+    embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${category.emoji} ${category.title}`).setDescription(category.key === "collaboration"
+      ? "Cześć! 😊 Dzięki za kontakt w sprawie współpracy. Napisz proszę, ile osób jest na Twoim serwerze Discord, i podeślij link lub zaproszenie do niego. Dodaj też krótko, jaki masz pomysł na współpracę."
+      : "Cześć! 😊 Chętnie pomożemy. Opisz proszę, czego dotyczy sprawa i dodaj wszystkie ważne szczegóły. Jeśli potrzebujesz administratora w Emergency Hamburg, napisz, czego potrzebujesz w grze — przekażemy administracji krótkie podsumowanie.")],
     components: [new ActionRowBuilder().addComponents(closeButton)],
     allowedMentions: { parse: [], users: [interaction.user.id], roles: [role.id] },
   });
@@ -6605,6 +6614,19 @@ client.on("messageCreate", async (message) => {
         await partialReplyMessage.edit({ content: reply, allowedMentions: { parse: [] } });
       } else {
         partialReplyMessage = await message.reply({ content: reply, allowedMentions: { parse: [] } });
+      }
+      const asksForInGameAdmin = Boolean(ticketTopic)
+        && /\b(admin|administracj|adm|administrator)\w*\b/i.test(message.content)
+        && /\b(w\s+grze|in\s+game|emergency\s+hamburg|roblox|eh)\b/i.test(message.content);
+      if (asksForInGameAdmin && message.guild) {
+        const adminRole = message.guild.roles.cache.find((role) => role.name.toLocaleLowerCase("pl-PL") === "administacja");
+        if (adminRole) {
+          const summary = message.content.replace(/<@!?\d+>/g, "").trim().slice(0, 700) || "Prośba o pomoc administratora w grze.";
+          await message.channel.send({
+            content: `<@&${adminRole.id}> Prośba o pomoc administratora w grze od <@${message.author.id}>. Podsumowanie: ${summary}`,
+            allowedMentions: { parse: [], roles: [adminRole.id], users: [message.author.id] },
+          });
+        }
       }
       conversationHistory.push({ role: "assistant", content: reply });
       botMentionConversationHistories.set(contextKey, {
