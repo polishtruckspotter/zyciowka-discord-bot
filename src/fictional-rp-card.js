@@ -28,12 +28,15 @@ async function createFictionalRpCardImage({
   const context = canvas.getContext("2d");
   context.drawImage(template, 0, 0);
 
+  // Remove the printed expiry-date field by continuing the nearby card texture.
+  context.drawImage(template, 850, 167, 160, 18, 850, 144, 160, 18);
+
   // Replace the template's portrait placeholder with the Roblox character image.
   context.save();
   context.beginPath();
-  context.arc(570, 78, 27, 0, Math.PI * 2);
+  context.arc(570, 78, 36, 0, Math.PI * 2);
   context.clip();
-  context.drawImage(avatar, 543, 51, 54, 54);
+  context.drawImage(avatar, 534, 42, 72, 72);
   context.restore();
 
   const drawValue = (value, x, y, maxWidth, fontSize = 15) => {
@@ -47,14 +50,14 @@ async function createFictionalRpCardImage({
   };
 
   // Values sit directly below the corresponding labels on the two-sided template.
-  drawValue(surname, 195, 124, 285, 13);
-  drawValue(givenNames, 195, 168, 285, 13);
-  drawValue(surname, 195, 211, 285, 13);
+  drawValue(surname, 195, 142, 285, 13);
+  drawValue(givenNames, 195, 186, 285, 13);
+  drawValue(surname, 195, 229, 285, 13);
   drawValue(dateOfBirth, 194, 319, 150, 13);
   drawValue(gender, 361, 319, 95, 13);
   drawValue(citizenship, 617, 97, 170, 12);
   drawValue("Poznań RP", 542, 180, 280, 12);
-  drawValue(issueDate, 855, 97, 145, 12);
+  drawValue(issueDate, 855, 130, 145, 12);
 
   return canvas.toBuffer("image/png");
 }
