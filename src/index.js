@@ -2502,6 +2502,7 @@ function makeStaffRosterSetupEmbed(session, guild) {
     .addFields(staffRosterCategories.map((category) => {
       const entries = session.roles
         .filter((entry) => entry.categoryKey === category.key)
+        .sort((left, right) => (guild.roles.cache.get(right.roleId)?.position ?? 0) - (guild.roles.cache.get(left.roleId)?.position ?? 0))
         .map((entry, index) => ({ ...entry, position: index + 1 }));
       const lines = entries.map((entry) =>
         `**${String(entry.position).padStart(2, "0")}** · ${escapeStaffRoleName(guild.roles.cache.get(entry.roleId)?.name ?? "Rola niedostępna")}`,
@@ -2511,7 +2512,7 @@ function makeStaffRosterSetupEmbed(session, guild) {
         value: limitRosterField(lines),
       };
     }))
-    .setFooter({ text: "Kolejność kategorii jest stała; role w kategorii są wyświetlane w kolejności dodawania." });
+    .setFooter({ text: "Kolejność kategorii jest stała; role są ułożone według hierarchii Discord, od najwyższej." });
 }
 
 function makeStaffRosterSetupComponents(userId, session, guild) {
@@ -2737,7 +2738,9 @@ async function handleStaffRosterPublish(interaction) {
   const fields = staffRosterCategories.map((category) => {
     const categoryRoles = session.roles
       .filter((entry) => entry.categoryKey === category.key)
-      .map((entry, index) => ({ ...entry, position: index + 1, role: selectedRoles.get(entry.roleId) }));
+      .map((entry) => ({ ...entry, role: selectedRoles.get(entry.roleId) }))
+      .sort((left, right) => right.role.position - left.role.position)
+      .map((entry, index) => ({ ...entry, position: index + 1 }));
     const lines = [];
     for (const entry of categoryRoles) {
       const roleName = escapeStaffRoleName(entry.role.name);
@@ -2764,7 +2767,7 @@ async function handleStaffRosterPublish(interaction) {
     .setTitle("🏛️ Skład administracji")
     .setDescription(`**Kategorie od góry do dołu** · ${session.roles.length} ról · ${memberIds.size} osób\nKolejność: Główny zarząd → Opiekunowie → Administracja → Moderacja → Supporterzy. Każda osoba jest wymieniona pod wszystkimi posiadanymi rolami. Skład aktualizuje się automatycznie po zmianach członków i ról.`)
     .addFields(fields)
-    .setFooter({ text: "Kolejność kategorii jest stała • kolejność ról w każdej kategorii jest konfigurowana" })
+    .setFooter({ text: "Kolejność kategorii jest stała • role w kategorii są ułożone według hierarchii Discord" })
     .setTimestamp();
 
   const previousConfig = webhookConfigs[guild.id]?.staffRosterConfig;
@@ -2820,8 +2823,10 @@ async function refreshStaffRoster(guild) {
   const fields = staffRosterCategories.map((category) => {
     const roles = config.roles
       .filter((entry) => entry.categoryKey === category.key)
-      .map((entry, index) => ({ ...entry, position: index + 1, role: guild.roles.cache.get(entry.roleId) }))
-      .filter((entry) => entry.role);
+      .map((entry) => ({ ...entry, role: guild.roles.cache.get(entry.roleId) }))
+      .filter((entry) => entry.role)
+      .sort((left, right) => right.role.position - left.role.position)
+      .map((entry, index) => ({ ...entry, position: index + 1 }));
     const lines = [];
     for (const entry of roles) {
       lines.push(`**${String(entry.position).padStart(2, "0")} · ${escapeStaffRoleName(entry.role.name)}**`);
@@ -2841,7 +2846,7 @@ async function refreshStaffRoster(guild) {
     .setTitle("🏛️ Skład administracji")
     .setDescription(`**Kategorie od góry do dołu** · ${config.roles.length} ról · ${seenMembers.size} osób\nKolejność: Główny zarząd → Opiekunowie → Administracja → Moderacja → Supporterzy. Aktualizacja automatyczna przy zmianie ról i dołączeniu lub odejściu członka.`)
     .addFields(fields)
-    .setFooter({ text: "Kolejność kategorii jest stała • kolejność ról w każdej kategorii jest konfigurowana" })
+    .setFooter({ text: "Kolejność kategorii jest stała • role w kategorii są ułożone według hierarchii Discord" })
     .setTimestamp();
   await message.edit({ embeds: [embed], allowedMentions: { parse: [] } });
 }
@@ -6638,15 +6643,30 @@ client.on("guildMemberAdd", (member) => {
 });
 
 client.on("guildMemberRemove", (member) => scheduleStaffRosterRefresh(member.guild));
-client.on("guildMemberUpdate", (oldMember, newMember) => {
-  const rolesChanged = oldMember.roles.cache.size !== newMember.roles.cache.size ||
-    [...oldMember.roles.cache.keys()].some((roleId) => !newMember.roles.cache.has(roleId));
-  if (rolesChanged || oldMember.displayName !== newMember.displayName) {
+client.on("guildMemberUpdate", async (oldMember, newMember) => {
+  const config = webhookConfigs[newMember.guild.id]?.staffRosterConfig;
+  if (!config?.destinationChannelId || !Array.isArray(config.roles)) return;
+  const configuredRoleIds = new Set(config.roles.map(({ roleId }) => roleId));
+  const roleIds = new Set([...oldMember.roles.cache.keys(), ...newMember.roles.cache.keys()]);
+  const rosterRoleChanged = [...roleIds].some((roleId) =>
+    configuredRoleIds.has(roleId) && oldMember.roles.cache.has(roleId) !== newMember.roles.cache.has(roleId),
+  );
+  const nameChanged = oldMember.displayName !== newMember.displayName;
+  if (!rosterRoleChanged && !nameChanged) return;
+  try {
+    await newMember.guild.members.fetch({ user: newMember.id, force: true });
+    scheduleStaffRosterRefresh(newMember.guild);
+  } catch (error) {
+    console.error(`Nie udało się pobrać aktualnych ról członka ${newMember.id}; używam danych zdarzenia:`, error);
     scheduleStaffRosterRefresh(newMember.guild);
   }
 });
 client.on("roleUpdate", (oldRole, newRole) => {
-  if (oldRole.name !== newRole.name) scheduleStaffRosterRefresh(newRole.guild);
+  const config = webhookConfigs[newRole.guild.id]?.staffRosterConfig;
+  const isRosterRole = config?.roles?.some(({ roleId }) => roleId === newRole.id);
+  if (isRosterRole && (oldRole.name !== newRole.name || oldRole.position !== newRole.position)) {
+    scheduleStaffRosterRefresh(newRole.guild);
+  }
 });
 client.on("roleDelete", (role) => scheduleStaffRosterRefresh(role.guild));
 
