@@ -35,20 +35,20 @@ async function createWeaponPermitCardImage({ profile, fullName, birthDetails, ad
   // Keep the account ID below the template's printed label and above the seal.
   drawValue(profile.id, 845, 271, 180, 16, "center");
 
-  // Put the Roblox portrait in the blank left column, separate from the printed seal and fields.
+  // Fill the template's blank portrait panel, keeping the photo clear of its labels.
   context.save();
   context.beginPath();
-  context.arc(175, 300, 78, 0, Math.PI * 2);
+  context.arc(195, 300, 82, 0, Math.PI * 2);
   context.clip();
-  context.drawImage(avatar, 97, 222, 156, 156);
+  context.drawImage(avatar, 113, 218, 164, 164);
   context.restore();
   context.beginPath();
-  context.arc(175, 300, 78, 0, Math.PI * 2);
+  context.arc(195, 300, 82, 0, Math.PI * 2);
   context.strokeStyle = "rgba(255,255,255,0.95)";
   context.lineWidth = 4;
   context.stroke();
 
-  drawValue(profile.displayName || profile.username, 82, 514, 220, 15);
+  drawValue(profile.displayName || profile.username, 190, 493, 205, 15, "center");
   drawValue(issuerName, 830, 603, 175, 15, "center");
 
   // Cover the preprinted placeholder and draw one readable RP card number.

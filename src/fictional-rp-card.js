@@ -28,18 +28,13 @@ async function createFictionalRpCardImage({
   const context = canvas.getContext("2d");
   context.drawImage(template, 0, 0);
 
-  // Fit the Roblox avatar into the open portrait area beside the name fields.
+  // Keep the portrait in the open lower-left area, clear of the printed labels.
   context.save();
   context.beginPath();
-  context.arc(127, 198, 64, 0, Math.PI * 2);
+  context.arc(105, 315, 55, 0, Math.PI * 2);
   context.clip();
-  context.drawImage(avatar, 63, 134, 128, 128);
+  context.drawImage(avatar, 50, 260, 110, 110);
   context.restore();
-  context.beginPath();
-  context.arc(127, 198, 64, 0, Math.PI * 2);
-  context.strokeStyle = "rgba(255,255,255,0.9)";
-  context.lineWidth = 3;
-  context.stroke();
 
   const drawValue = (value, x, y, maxWidth, fontSize = 15) => {
     context.fillStyle = "#151515";
@@ -51,19 +46,18 @@ async function createFictionalRpCardImage({
     context.fillText(text, x, y, maxWidth);
   };
 
-  // The template labels these spaces already; values sit directly below each label.
-  drawValue(surname, 195, 136, 290);
-  drawValue(givenNames, 195, 185, 290);
-  drawValue(surname, 195, 232, 290);
-  drawValue(dateOfBirth, 195, 322, 150);
-  drawValue(gender, 355, 322, 120);
+  // Values are placed below their matching printed labels.
+  drawValue(surname, 198, 222, 275);
+  drawValue(givenNames, 198, 267, 275);
+  drawValue(surname, 198, 312, 200);
+  drawValue(dateOfBirth, 190, 400, 155);
+  drawValue(gender, 360, 400, 105);
 
   // These identifiers are deliberately marked as roleplay-only, never real identity data.
-  drawValue("TYLKO RP", 625, 61, 180, 13);
-  drawValue(citizenship, 625, 99, 190, 13);
-  drawValue("Poznań RP", 541, 154, 270, 14);
-  drawValue(`RP-${String(profile.id).slice(-8)}`, 857, 61, 145, 12);
-  drawValue(issueDate, 857, 100, 145, 13);
+  drawValue("TYLKO RP", 627, 142, 175, 13);
+  drawValue(citizenship, 615, 179, 175, 13);
+  drawValue(`RP-${String(profile.id).slice(-8)}`, 858, 142, 145, 12);
+  drawValue(issueDate, 858, 179, 145, 13);
 
   return canvas.toBuffer("image/png");
 }

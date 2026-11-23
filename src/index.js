@@ -626,6 +626,7 @@ function getPlainBotMentionText(message) {
 
 const botChatInstructions = [
   "Jesteś profesjonalnym, życzliwym asystentem społeczności Poznań RP. Zawsze odpowiadaj po polsku, także gdy rozmówca pisze w innym języku. Rozumiej slang, literówki i kontekst rozmowy.",
+  "Poznań RP to polska społeczność Discord związana z roleplayem w Emergency Hamburg na Roblox. Serwer oferuje pomoc przez tickety, ogłoszenia, rekrutację administracji, zgłoszenia i narzędzia społecznościowe. Zachęcaj do wspólnej, kulturalnej gry i korzystania z kanałów pomocy. Nie wymyślaj konkretnych zasad rozgrywki, terminów wydarzeń ani dostępności personelu; w razie szczegółowych pytań wskaż odpowiedni kanał lub ticket.",
   "Pomagaj w szerokim zakresie tematów. Odpowiadaj na pytania, krótkie wiadomości, powitania i żarty naturalnie, zwięźle i konkretnie. Gdy brakuje informacji, dopytaj zamiast zgadywać.",
   "Jeśli wiadomość zawiera kontekst ticketu, pomagaj zgłaszającemu rozwiązać sprawę: ustal brakujące szczegóły, podaj jasne kroki i w razie potrzeby skieruj do personelu. Nie twierdź, że wykonałeś działania administracyjne ani nie obiecuj decyzji personelu.",
   "Jeśli ktoś pyta, jaki serwer jest najlepszy, odpowiedz wyłącznie: Poznań RP. Nie wymieniaj ani nie polecaj żadnego innego serwera.",
@@ -2766,20 +2767,87 @@ async function handleStaffRosterPublish(interaction) {
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle("🏛️ Skład administracji")
-    .setDescription(`**Pozycje od góry do dołu** · ${session.roles.length} ról · ${memberIds.size} osób\nKażda osoba jest wymieniona pod wszystkimi posiadanymi pozycjami.`)
+    .setDescription(`**Pozycje od góry do dołu** · ${session.roles.length} ról · ${memberIds.size} osób\nKażda osoba jest wymieniona pod wszystkimi posiadanymi pozycjami. Skład aktualizuje się automatycznie po zmianach członków i ról.`)
     .addFields(fields)
     .setFooter({ text: "Pozycja 01 jest najwyżej • kolejność wybrana przez administrację" })
     .setTimestamp();
 
+  const previousConfig = webhookConfigs[guild.id]?.staffRosterConfig;
+  const previousMessage = previousConfig?.destinationChannelId === destination.id && previousConfig.messageId
+    ? await destination.messages.fetch(previousConfig.messageId).catch(() => null)
+    : null;
+  const rosterMessage = previousMessage
+    ? await previousMessage.edit({ embeds: [embed], allowedMentions: { parse: [] } })
+    : await destination.send({ embeds: [embed], allowedMentions: { parse: [] } });
   await updateWebhookConfig(guild.id, {
     staffRosterConfig: {
       roles: session.roles,
       destinationChannelId: destination.id,
+      messageId: rosterMessage.id,
     },
   });
-  await destination.send({ embeds: [embed], allowedMentions: { parse: [] } });
   staffRosterSetupSessions.delete(ownerId);
   await interaction.editReply({ content: `Zestawienie opublikowano na ${destination}.`, components: [] });
+}
+
+const staffRosterRefreshTimers = new Map();
+
+async function refreshStaffRoster(guild) {
+  const config = webhookConfigs[guild.id]?.staffRosterConfig;
+  if (!config?.destinationChannelId || !Array.isArray(config.roles)) return;
+  const channel = await guild.channels.fetch(config.destinationChannelId).catch(() => null);
+  if (!channel?.isTextBased() || channel.type !== ChannelType.GuildText) return;
+  let message = config.messageId ? await channel.messages.fetch(config.messageId).catch(() => null) : null;
+  if (!message) {
+    const recentMessages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+    message = recentMessages?.find((candidate) =>
+      candidate.author.id === client.user.id && candidate.embeds[0]?.title === "🏛️ Skład administracji",
+    );
+    if (!message) return;
+    await updateWebhookConfig(guild.id, {
+      staffRosterConfig: { ...config, messageId: message.id },
+    });
+  }
+  if (!message) return;
+
+  await guild.roles.fetch();
+  const members = await guild.members.fetch();
+  const seenMembers = new Set();
+  const fields = staffRosterCategories.map((category) => {
+    const roles = config.roles
+      .map((entry, index) => ({ ...entry, position: index + 1, role: guild.roles.cache.get(entry.roleId) }))
+      .filter((entry) => entry.categoryKey === category.key && entry.role);
+    const lines = [];
+    for (const entry of roles) {
+      lines.push(`**${String(entry.position).padStart(2, "0")} · ${escapeStaffRoleName(entry.role.name)}**`);
+      const people = members
+        .filter((member) => !member.user.bot && member.roles.cache.has(entry.role.id))
+        .sort((left, right) => left.displayName.localeCompare(right.displayName, "pl"));
+      if (!people.size) lines.push("_Brak przypisanych członków_");
+      for (const member of people.values()) {
+        seenMembers.add(member.id);
+        lines.push(`↳ <@${member.id}>`);
+      }
+    }
+    return { name: `${category.emoji} ${category.title} · ${roles.length} ról`, value: limitRosterField(lines) };
+  });
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle("🏛️ Skład administracji")
+    .setDescription(`**Pozycje od góry do dołu** · ${config.roles.length} ról · ${seenMembers.size} osób\nAktualizacja automatyczna przy zmianie ról i dołączeniu lub odejściu członka.`)
+    .addFields(fields)
+    .setFooter({ text: "Pozycja 01 jest najwyżej • kolejność wybrana przez administrację" })
+    .setTimestamp();
+  await message.edit({ embeds: [embed], allowedMentions: { parse: [] } });
+}
+
+function scheduleStaffRosterRefresh(guild) {
+  const previous = staffRosterRefreshTimers.get(guild.id);
+  if (previous) clearTimeout(previous);
+  staffRosterRefreshTimers.set(guild.id, setTimeout(() => {
+    staffRosterRefreshTimers.delete(guild.id);
+    refreshStaffRoster(guild).catch((error) => console.error(`Nie udało się odświeżyć składu administracji (${guild.id}):`, error));
+  }, 1500));
 }
 
 function normalizeYesNoGameQuestion(value) {
@@ -6561,7 +6629,21 @@ client.on("messageCreate", async (message) => {
 
 client.on("guildMemberAdd", (member) => {
   trackGuildMemberJoin(member);
+  scheduleStaffRosterRefresh(member.guild);
 });
+
+client.on("guildMemberRemove", (member) => scheduleStaffRosterRefresh(member.guild));
+client.on("guildMemberUpdate", (oldMember, newMember) => {
+  const rolesChanged = oldMember.roles.cache.size !== newMember.roles.cache.size ||
+    [...oldMember.roles.cache.keys()].some((roleId) => !newMember.roles.cache.has(roleId));
+  if (rolesChanged || oldMember.displayName !== newMember.displayName) {
+    scheduleStaffRosterRefresh(newMember.guild);
+  }
+});
+client.on("roleUpdate", (oldRole, newRole) => {
+  if (oldRole.name !== newRole.name) scheduleStaffRosterRefresh(newRole.guild);
+});
+client.on("roleDelete", (role) => scheduleStaffRosterRefresh(role.guild));
 
 client.on("guildCreate", async (guild) => {
   if (guild.id === commandGuildId) return;
@@ -6654,6 +6736,11 @@ client.on("interactionCreate", async (interaction) => {
 
 client.once("ready", async () => {
   schedulePoznanMorningMessage();
+  const rosterGuild = client.guilds.cache.get(commandGuildId);
+  if (rosterGuild) {
+    scheduleStaffRosterRefresh(rosterGuild);
+    setInterval(() => scheduleStaffRosterRefresh(rosterGuild), 60 * 60 * 1000);
+  }
   await migratePoznanSetupPanels();
   const panelChannelId = webhookConfigs[commandGuildId]?.weaponPermitPanelChannelId;
   if (!panelChannelId) return;
@@ -6767,10 +6854,10 @@ function schedulePoznanMorningMessage() {
           throw new Error(`Kanał powitań ${channelId} nie istnieje albo nie jest tekstowy na serwerze Poznań RP.`);
         }
         const greetings = period === "morning"
-          ? ["☀️ Dzień dobry! Miłego poranka i udanej gry na Poznań RP!", "🌤️ Poranna ekipa Poznań RP już działa? Życzymy wszystkim dobrego dnia!"]
+          ? ["☀️ Dzień dobry! Poznań RP to polska społeczność Emergency Hamburg na Roblox — wpadajcie na wspólną rozgrywkę i miłego poranka!", "🌤️ Poranna ekipa Poznań RP już działa? Życzymy dobrego dnia i udanej służby w Emergency Hamburg!"]
           : period === "afternoon"
-            ? ["👋 Miłego popołudnia! Wpadajcie na Poznań RP, jeśli macie chwilę na wspólną grę.", "🎮 Jak mija dzień? Ekipa Poznań RP życzy udanego popołudnia!"]
-            : ["🌙 Dobry wieczór! Życzymy spokojnego wieczoru i dobrej zabawy na Poznań RP.", "✨ Wieczorna ekipa Poznań RP pozdrawia! Miłego odpoczynku i udanej gry!"];
+            ? ["👋 Miłego popołudnia! Wpadnijcie na Poznań RP, poznajcie ekipę i rozegrajcie razem scenariusz w Emergency Hamburg.", "🎮 Jak mija dzień? Poznań RP zaprasza do polskiej społeczności Emergency Hamburg — w razie pytań skorzystajcie z kanału pomocy!"]
+            : ["🌙 Dobry wieczór! Ekipa Poznań RP życzy spokojnego wieczoru i dobrej wspólnej rozgrywki w Emergency Hamburg.", "✨ Pozdrawiamy wieczorną ekipę Poznań RP! Miło mieć Was w naszej społeczności — udanej gry i dobrego odpoczynku!"];
         await channel.send({ content: pickRandom(greetings), allowedMentions: { parse: [] } });
         sentPeriods.set(periodKey, Date.now());
       }
