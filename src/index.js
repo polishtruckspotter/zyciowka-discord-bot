@@ -6832,7 +6832,8 @@ async function migratePoznanSetupPanels() {
     const shouldDiscoverIdPanels = !config.idCardPanelChannelId;
     let updated = 0;
     for (const channel of allChannels.values()) {
-      if (channel.type !== ChannelType.GuildText) continue;
+      // Discord.js may include null entries for channels deleted since the last cache state.
+      if (!channel || channel.type !== ChannelType.GuildText) continue;
       const isConfigured = configuredIds.has(channel.id);
       if (!isConfigured && !shouldDiscoverIdPanels) continue;
       let messages;
