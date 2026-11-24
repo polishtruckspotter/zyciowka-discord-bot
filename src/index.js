@@ -7006,16 +7006,35 @@ if (missing.length) {
   ])
     .then(async () => {
       console.info("[start] Dane wczytane. Łączę się z Discordem…");
+      const tokenCheck = await fetch("https://discord.com/api/v10/users/@me", {
+        headers: { Authorization: `Bot ${process.env.DISCORD_TOKEN}` },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!tokenCheck.ok) {
+        throw new Error(`Discord odrzucił kontrolę tokena (HTTP ${tokenCheck.status}). Sprawdź DISCORD_TOKEN w zmiennych hostingu.`);
+      }
+      console.info("[start] Token zaakceptowany przez Discord REST. Sprawdzam połączenie Gateway…");
+
+      const gatewayDiagnostics = (details) => {
+        if (/gateway|websocket|identify|ready|heartbeat|session|shard/i.test(details)) {
+          console.info(`[discord-gateway] ${details.slice(0, 300)}`);
+        }
+      };
+      client.on("debug", gatewayDiagnostics);
       const loginWatchdog = setTimeout(() => {
         console.error("[start] Bot nie osiągnął stanu ready w ciągu 60 s. Kończę proces, aby nadzorca mógł go uruchomić ponownie.");
         client.destroy();
         process.exit(1);
       }, 60 * 1000);
-      client.once("ready", () => clearTimeout(loginWatchdog));
+      client.once("ready", () => {
+        clearTimeout(loginWatchdog);
+        client.off("debug", gatewayDiagnostics);
+      });
       try {
         await client.login(process.env.DISCORD_TOKEN);
       } catch (error) {
         clearTimeout(loginWatchdog);
+        client.off("debug", gatewayDiagnostics);
         throw error;
       }
     })
