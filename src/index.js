@@ -1,4 +1,5 @@
 require("dotenv").config();
+console.info("[start] Uruchamianie aplikacji bota…");
 
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -6995,6 +6996,7 @@ if (missing.length) {
   console.error(`Brak wymaganych zmiennych środowiskowych: ${missing.join(", ")}. Skopiuj .env.example do .env i uzupełnij wartości.`);
   process.exitCode = 1;
 } else {
+  console.info("[start] Wczytuję zapisane dane bota…");
   Promise.all([
     loadWebhookConfigs(),
     loadWeaponPermitIdentityRequests(),
@@ -7002,7 +7004,21 @@ if (missing.length) {
     loadYesNoPolls(),
     loadYesNoGameSessions(),
   ])
-    .then(() => client.login(process.env.DISCORD_TOKEN))
+    .then(async () => {
+      console.info("[start] Dane wczytane. Łączę się z Discordem…");
+      const loginWatchdog = setTimeout(() => {
+        console.error("[start] Bot nie osiągnął stanu ready w ciągu 60 s. Kończę proces, aby nadzorca mógł go uruchomić ponownie.");
+        client.destroy();
+        process.exit(1);
+      }, 60 * 1000);
+      client.once("ready", () => clearTimeout(loginWatchdog));
+      try {
+        await client.login(process.env.DISCORD_TOKEN);
+      } catch (error) {
+        clearTimeout(loginWatchdog);
+        throw error;
+      }
+    })
     .catch((error) => {
       console.error("Nie udało się uruchomić bota lub wczytać konfiguracji:", error);
       process.exitCode = 1;
