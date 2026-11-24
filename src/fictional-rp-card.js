@@ -31,12 +31,12 @@ async function createFictionalRpCardImage({
   // Remove the printed expiry-date field by continuing the clean texture below it.
   context.drawImage(template, 850, 171, 160, 22, 850, 145, 160, 22);
 
-  // Replace the template's portrait placeholder with the Roblox character image.
+  // Place the Roblox profile in the open left column beside the name fields.
   context.save();
   context.beginPath();
-  context.arc(570, 70, 30, 0, Math.PI * 2);
+  context.arc(125, 200, 58, 0, Math.PI * 2);
   context.clip();
-  context.drawImage(avatar, 540, 40, 60, 60);
+  context.drawImage(avatar, 67, 142, 116, 116);
   context.restore();
 
   const drawValue = (value, x, y, maxWidth, fontSize = 15) => {
