@@ -7006,14 +7006,7 @@ if (missing.length) {
   ])
     .then(async () => {
       console.info("[start] Dane wczytane. Łączę się z Discordem…");
-      const tokenCheck = await fetch("https://discord.com/api/v10/users/@me", {
-        headers: { Authorization: `Bot ${process.env.DISCORD_TOKEN}` },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!tokenCheck.ok) {
-        throw new Error(`Discord odrzucił kontrolę tokena (HTTP ${tokenCheck.status}). Sprawdź DISCORD_TOKEN w zmiennych hostingu.`);
-      }
-      console.info("[start] Token zaakceptowany przez Discord REST. Sprawdzam połączenie Gateway…");
+      console.info("[start] Łączę się z Discordem przez Gateway…");
 
       const gatewayDiagnostics = (details) => {
         if (/gateway|websocket|identify|ready|heartbeat|session|shard/i.test(details)) {

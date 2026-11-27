@@ -28,7 +28,7 @@ function startBot() {
       return;
     }
     if (Date.now() - startedAt >= 5 * 60 * 1000) restartAttempt = 0;
-    const delay = Math.min(1000 * (2 ** restartAttempt), 30_000);
+    const delay = Math.min(1000 * (2 ** restartAttempt), 5 * 60_000);
     restartAttempt += 1;
     console.error(`Proces bota zakończył się (kod ${code ?? "brak"}, sygnał ${signal ?? "brak"}). Ponowne uruchomienie za ${Math.ceil(delay / 1000)} s.`);
     restartTimer = setTimeout(startBot, delay);
