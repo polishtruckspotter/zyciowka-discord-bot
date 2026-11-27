@@ -6825,18 +6825,15 @@ client.once("ready", async () => {
 async function migratePoznanSetupPanels() {
   try {
     const guild = await client.guilds.fetch(commandGuildId);
-    const allChannels = await guild.channels.fetch();
     const config = webhookConfigs[commandGuildId] ?? {};
-    const configuredIds = new Set(
-      [config.weaponPermitPanelChannelId, config.idCardPanelChannelId].filter(Boolean),
-    );
-    const shouldDiscoverIdPanels = !config.idCardPanelChannelId;
+    // Only inspect channels explicitly configured for these panels. Scanning every
+    // text channel and fetching 100 messages from each can create a large REST burst.
+    const configuredIds = new Set([config.weaponPermitPanelChannelId, config.idCardPanelChannelId].filter(Boolean));
+    if (!configuredIds.size) return;
     let updated = 0;
-    for (const channel of allChannels.values()) {
-      // Discord.js may include null entries for channels deleted since the last cache state.
+    for (const channelId of configuredIds) {
+      const channel = await guild.channels.fetch(channelId).catch(() => null);
       if (!channel || channel.type !== ChannelType.GuildText) continue;
-      const isConfigured = configuredIds.has(channel.id);
-      if (!isConfigured && !shouldDiscoverIdPanels) continue;
       let messages;
       try {
         messages = await channel.messages.fetch({ limit: 100 });
@@ -6867,9 +6864,6 @@ async function migratePoznanSetupPanels() {
         if (embedNeedsUpdate || legacyContent !== message.content) {
           await message.edit({ content: legacyContent, embeds: [nextEmbed], allowedMentions: { parse: [] } });
           updated += 1;
-        }
-        if (isIdPanel && config.idCardPanelChannelId !== channel.id) {
-          await updateWebhookConfig(commandGuildId, { idCardPanelChannelId: channel.id });
         }
       }
     }
