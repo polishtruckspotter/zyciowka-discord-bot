@@ -7013,21 +7013,24 @@ if (missing.length) {
           console.info(`[discord-gateway] ${details.slice(0, 300)}`);
         }
       };
+      const restRateLimitDiagnostics = ({ route, retryAfter, scope, global }) => {
+        console.warn(`[discord-rest] Rate limited on ${route} (${scope}${global ? ", global" : ""}); retrying in ${Math.ceil(retryAfter / 1000)} s.`);
+      };
       client.on("debug", gatewayDiagnostics);
       const loginWatchdog = setTimeout(() => {
-        console.error("[start] Bot nie osiągnął stanu ready w ciągu 60 s. Kończę proces, aby nadzorca mógł go uruchomić ponownie.");
-        client.destroy();
-        process.exit(1);
+        console.warn("[start] Bot nadal łączy się z Discordem po 60 s. Czekam na odpowiedź Discord REST/Gateway; sprawdź wpisy [discord-rest] wyżej.");
       }, 60 * 1000);
       client.once("ready", () => {
         clearTimeout(loginWatchdog);
         client.off("debug", gatewayDiagnostics);
       });
+      client.rest.on("rateLimited", restRateLimitDiagnostics);
       try {
         await client.login(process.env.DISCORD_TOKEN);
       } catch (error) {
         clearTimeout(loginWatchdog);
         client.off("debug", gatewayDiagnostics);
+        client.rest.off("rateLimited", restRateLimitDiagnostics);
         throw error;
       }
     })
