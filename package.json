@@ -7,6 +7,10 @@
   "scripts": {
     "start": "node src/runner.js",
     "start:direct": "node src/index.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop poznan-rp-bot",
+    "pm2:restart": "pm2 restart poznan-rp-bot",
+    "pm2:logs": "pm2 logs poznan-rp-bot",
     "check": "node --check src/runner.js && node --check src/index.js && node --check src/code-question.js && node --check src/fictional-rp-card.js && node --check src/weapon-permit-card.js && node --check src/commands.js && node --check api/bot-command.js && node --check api/get-guilds.js && node --check api/get-token.js && node --check api/panel.js && node --check api/trucksbook-km.js && node --check api/welcome-preview.js",
     "test": "node --test"
   },
@@ -16,6 +20,7 @@
   "dependencies": {
     "@napi-rs/canvas": "^1.1.1",
     "discord.js": "^14.19.3",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "pm2": "^7.1.2"
   }
 }

@@ -44,6 +44,24 @@ Polskojęzyczny bot do weryfikacji członków i podstawowej moderacji serwera Di
 
    Bot automatycznie rejestruje komendy po zalogowaniu na serwerze z `GUILD_ID` (domyślnie `1561435544930623619`). Bot musi już być zaproszony na ten serwer.
 
+### Automatyczny restart przez PM2
+
+PM2 może ponownie uruchomić bota po nieoczekiwanym zakończeniu procesu. Po `npm install` uruchom:
+
+```sh
+npm run pm2:start
+```
+
+Przydatne polecenia:
+
+```sh
+npm run pm2:logs
+npm run pm2:restart
+npm run pm2:stop
+```
+
+PM2 uruchamia bezpośrednio `src/index.js`. Używaj PM2 albo `npm start` jako nadzorcy procesu, nie obu naraz. `npm start` nadal działa samodzielnie. Na Wispbyte pozostaw `npm start` jako Startup Command, ponieważ hosting sam zarządza procesem.
+
 ## Wdrożenie na Wispbyte
 
 Bot jest procesem Discord Gateway, więc nie potrzebuje strony WWW ani otwartego portu.
