@@ -7016,6 +7016,11 @@ if (missing.length) {
       const restRateLimitDiagnostics = ({ route, retryAfter, scope, global }) => {
         console.warn(`[discord-rest] Rate limited on ${route} (${scope}${global ? ", global" : ""}); retrying in ${Math.ceil(retryAfter / 1000)} s.`);
       };
+      const restResponseDiagnostics = (request, response) => {
+        if (!client.isReady()) {
+          console.info(`[discord-rest] ${request.method} ${request.path} returned HTTP ${response.status}.`);
+        }
+      };
       client.on("debug", gatewayDiagnostics);
       const loginWatchdog = setTimeout(() => {
         console.warn("[start] Bot nadal łączy się z Discordem po 60 s. Czekam na odpowiedź Discord REST/Gateway; sprawdź wpisy [discord-rest] wyżej.");
@@ -7025,12 +7030,14 @@ if (missing.length) {
         client.off("debug", gatewayDiagnostics);
       });
       client.rest.on("rateLimited", restRateLimitDiagnostics);
+      client.rest.on("response", restResponseDiagnostics);
       try {
         await client.login(process.env.DISCORD_TOKEN);
       } catch (error) {
         clearTimeout(loginWatchdog);
         client.off("debug", gatewayDiagnostics);
         client.rest.off("rateLimited", restRateLimitDiagnostics);
+        client.rest.off("response", restResponseDiagnostics);
         throw error;
       }
     })
